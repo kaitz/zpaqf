@@ -7456,7 +7456,7 @@ std::string makeConfig(const char* method, int args[]) {
       else // s
         comp+=" sse "+itos(v[1])+" "+itos(ncomp-1)+" "+itos(v[2])+" "
             +itos(v[3])+"\n";
-      if (v[1]>8 && v[3] == 0) {
+      if (v[1]>8 && ( v[3] == 0 && (v[0] == 'm' || v[0] == 't') || v[0] == 's')) {
         hcomp+="d= "+itos(ncomp)+" *d=0 b=c a=0\n";
         for (; v[1]>=16; v[1]-=8) {
           hcomp+="a<<= 8 a+=*b";
@@ -7466,7 +7466,7 @@ std::string makeConfig(const char* method, int args[]) {
         if (v[1]>8)
           hcomp+="a<<= 8 a+=*b a>>= "+itos(16-v[1])+"\n";
         hcomp+="a<<= 8 *d=a\n";
-      }else if (v[1] >= 8 && v[3] > 0) {
+      }else if (v[0] == 'm' && v[1] >= 8 && v[3] > 0) {
           // use v[3] upper bits as mask for last byte and set as mixer context
           hcomp += "d= " + itos(ncomp) ;
           if (v[1] > 8){
