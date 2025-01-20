@@ -7437,12 +7437,14 @@ std::string makeConfig(const char* method, int args[]) {
       ++ncomp;
     }
 
-    // m,8,24: MIX, size, rate
+    // m,8,24,0,0: MIX, size, rate, bmask, blow
     // t,8,24: MIX2, size, rate
     // s,8,32,255: SSE, size, start, limit
     if (strchr("mts", v[0]) && ncomp>int(v[0]=='t')) {
       if (v.size()<=1) v.push_back(8);
       if (v.size()<=2) v.push_back(24+8*(v[0]=='s'));
+      if (v[0]=='m' && v.size()<=3) v.push_back(0);
+      if (v[0]=='m' && v.size()<=4) v.push_back(0);
       if (v[0]=='s' && v.size()<=3) v.push_back(255);
       comp+=itos(ncomp);
       sb=5+v[1]*3/4;
@@ -7454,7 +7456,7 @@ std::string makeConfig(const char* method, int args[]) {
       else // s
         comp+=" sse "+itos(v[1])+" "+itos(ncomp-1)+" "+itos(v[2])+" "
             +itos(v[3])+"\n";
-      if (v[1]>8) {
+      if (v[1]>8 && v[3] == 0) {
         hcomp+="d= "+itos(ncomp)+" *d=0 b=c a=0\n";
         for (; v[1]>=16; v[1]-=8) {
           hcomp+="a<<= 8 a+=*b";
@@ -7464,6 +7466,21 @@ std::string makeConfig(const char* method, int args[]) {
         if (v[1]>8)
           hcomp+="a<<= 8 a+=*b a>>= "+itos(16-v[1])+"\n";
         hcomp+="a<<= 8 *d=a\n";
+      }else if (v[1] >= 8 && v[3] > 0) {
+          // use v[3] upper bits as mask for last byte and set as mixer context
+          hcomp += "d= " + itos(ncomp) ;
+          if (v[1] > 8){
+          hcomp += " a= " + (itos((((1 << v[1]) - 1) - ((1 << (v[1] - v[3])) - 1))/ 256) );
+          hcomp += " a<<= 8";
+          
+          hcomp += " a+= " + (itos( (((1 << v[1]) - 1) - ((1 << (v[1] - v[3])) - 1)) & 255));
+          hcomp += " b=a";
+          }else  hcomp += " b= " + (itos((((1 << v[1]) - 1) - ((1 << (v[1] - v[3])) - 1)) ));
+          
+          hcomp += " a=*c ";
+          if (v[4]) hcomp += " a--";
+          if (v[1] > 8)  hcomp += " a<<= " + itos(v[1] - 8);
+          hcomp += + " a&=b *d=a \n";
       }
       ++ncomp;
     }
@@ -7635,9 +7652,14 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       else if (type<48)
         method+=","+itos(2+doe8)+",5,0,7"+sasz+"1c0,0,511";
       else if (type<900) {
-        method+=","+itos(doe8)+"ci1,1,1,1,2a";
-        if (type&1) method+="w";
-        method+="m";
+        method+=","+itos(doe8);
+        if (type&1) { //text
+            if (type>100) method += "ci1,2,1,2aw2,65,26,223,191,0";
+            else method += "ci1,1,1,1,2aw";
+        }
+        else method += "ci1,1,1,1,2a";
+        if (type&1) method += "m10,24,4,1";
+        else method+="m10,24,3";
       }
       else
         method+=","+itos(3+doe8)+"ci1";
