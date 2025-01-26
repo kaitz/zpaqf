@@ -6916,7 +6916,140 @@ std::string makeConfig(const char* method, int args[]) {
   std::string hdr, pcomp;
   const int level=args[1]&3;
   const bool doe8=args[1]>=4 && args[1]<=7;
+  const bool dobmp = args[1] == 8;
 
+  if (dobmp) {
+    int blev = min(5,args[0]);
+    hdr = "comp 17 17 0 3 33 (hh hm ph pm n)\n"
+          "  0 const 160\n"
+          "  1 cm "+itos(20+ blev)+" 255\n"
+          "  2 cm " + itos(20 + blev) + " 255\n"
+          "  3 cm " + itos(20 + blev) + " 255\n"
+          "  4 cm " + itos(20 + blev) + " 255\n"
+          "  5 cm " + itos(20 + blev) + " 255\n"
+          "  6 cm " + itos(20 + blev) + " 255\n"
+          "  7 cm " + itos(20 + blev) + " 255\n"
+          "  8 cm " + itos(20 + blev) + " 255\n"
+          "  9 icm " + itos(16 + blev) + "\n"
+          "  10 cm " + itos(20 + blev) + " 255\n"
+          "  11 icm " + itos(16 + blev) + "\n"
+          "  12 cm " + itos(20 + blev) + " 255\n"
+          "  13 icm " + itos(16 + blev) + "\n"
+          "  14 cm " + itos(20 + blev) + " 255\n"
+          "  15 icm " + itos(16 + blev) + "\n"
+          "  16 cm " + itos(20 + blev) + " 255\n"
+          "  17 cm " + itos(20 + blev) + " 255\n"
+          "  18 cm " + itos(20 + blev) + " 255\n"
+          "  19 cm " + itos(20 + blev) + " 255\n"
+          "  20 cm " + itos(20 + blev) + " 255\n"
+          "  21 icm " + itos(16 + blev) + "\n"
+          "  22 icm " + itos(16 + blev) + "\n"
+          "  23 cm 11 255\n"
+          
+          "  24 mix 16 0 24 16 255\n"
+          "  25 mix 11 0 25 20 255\n"
+          "  26 mix2 0 24 25 40 0\n"
+          "  27 mix 0 0 26 32 0\n"
+          "  28 mix2 0 26 27 40 0\n"
+          "  29 sse 16 28 8 255\n"
+          "  30 mix2 8 28 29 40 255\n"
+          "  31 sse 8 30 8 255\n"
+          "  32 mix2 0 30 31 40 0\n"
+          
+          "hcomp\n"
+          "  *c=a (save in rotating buffer)\n"
+          "  a=c a== 0 if (compute lookup ilog table)\n"
+          "    d= 255 *d=0 d++ *d=0\n"
+          "    a= 1 a<<= 16 r=a 0\n"
+          "    a= 7 a*= 100 a+= 74 a*= 100 a+= 54 a*= 100 a+= 10 a*= 100 a+= 2 r=a 1\n"
+          "    a= 14 a*= 100 a+= 15 a*= 100 a+= 57 a*= 100 a+= 76 c=a\n"
+          "    d= 2\n"
+          "    do\n"
+          "      a=d a*= 2 a-- b=a\n"
+          "      a=r 1 a/=b b=a\n"
+          "      a=c a+=b c=a\n"
+          "      a=d a+= 255 d=a a=c a>>= 24 *d=a a=d a-= 255 d=a\n"
+          "      d++\n"
+          "    a=r 0 b=a a=d a<b while\n"
+          "   c=0 a= 255 r=a 0\n"
+          "  endif\n"
+          "  a=c a== 3 if\n"
+          "    b=0 a=*b\n"
+          "    a== 0 ifnot b++ b++ a=*b a>>= 8 b-- a+=*b a++ a++ endif\n"
+          "    a+= 20\n"
+          "    r=a 19\n"
+          "  endif\n"
+          
+          "  a=r 19 a==c if b=c a=*b a<<= 8 b-- a+=*b a*= 3 a+= 3 a|= 3 a^= 3 r=a 0 endif (r0=w)\n"
+          
+          "  a=c a%= 3 r=a 1 (r1=color)\n"
+          "  b=c b-- b-- a=*b r=a 2 (r2=buf(3))\n"
+          "  a=c a++ b=r 0 a-=b b=a a=*b r=a 3 (r3=buf(w))\n"
+          "  a=c a-- a-- b=r 0 a-=b b=a a=*b r=a 4 (r4=buf(w+3))\n"
+          "  a=c a+= 4 b=r 0 a-=b b=a a=*b r=a 5 (r5=buf(w-3))\n"
+          "  a=r 2 b=r 3 a+=b b=r 4 a+=b b=r 5 a+=b r=a 6 (r6=mean)\n"
+          "  a=r 2 a*=a b=a a=r 3 a*=a a+=b b=a a=r 4 a*=a a+=b b=a a=r 5 a*=a a+=b b=a a=r 6 a*=a a/= 4 b<>a a-=b a>>= 2 r=a 7 (r7=var)\n"
+          "  a=r 6 a>>= 2 r=a 6 (r6>>=2)\n"
+          "  a=r 7 a+= 255 d=a a=*d r=a 8 (r8=logvar)\n"
+          
+          "  b=c a=*b r=a 9 (r9=buf(1))\n"
+          "  b=c b-- a=*b r=a 10 (r10=buf(2))\n"
+          "  a=c a-= 3 b=a a=*b r=a 11 (r11=buf(4))\n"
+          "  a=c a-= 5 b=a a=*b r=a 12 (r12=buf(6))\n"
+          "  a=c a++ b=r 0 a-=b a-=b b=a a=*b r=a 13 (r13=buf(w*2))\n"
+          "  a=c a+= 7 b=r 0 a-=b a-=b b=a a=*b r=a 14 (r14=buf(w*2-6))\n"
+          "  a=c a+= 4 b=r 0 a-=b a-=b b=a a=*b r=a 15 (r15=buf(w*2-3))\n"
+          "  a=c a-= 5 b=r 0 a-=b a-=b b=a a=*b r=a 16 (r16=buf(w*2+6))\n"
+          "  a=c b=r 0 a-=b b=a a=*b r=a 17 (r17=buf(w+1))\n"
+          "  a=c a+= 3 b=r 0 a-=b b=a a=*b r=a 18 (r18=buf(w-2))\n"
+          
+          "  d=0 do *d=0 d++ a=d a< 24 while\n"
+          
+          "  d=0\n"
+          "  d++\n"
+          "  a=r 3 b=r 4 a-=b b=r 2 a+=b hashd d++\n"
+          "  a=r 2 b=r 3 a-=b b=r 5 a+=b hashd d++\n"
+          "  a=r 2 a*= 2 b=r 12 a-=b hashd d++\n"
+          "  a=r 3 a*= 2 b=r 13 a-=b hashd d++\n"
+          "  a=r 4 a*= 2 b=r 16 a-=b hashd d++\n"
+          "  a=r 5 a*= 2 b=r 14 a-=b hashd d++\n"
+          "  a=r 9 b=r 18 a-=b b=r 5 a+=b hashd d++\n"
+          "  a=r 3 b=r 15 a-=b b=r 5 a+=b hashd d++\n"
+          "  a= 24 a*= 16 b=a a=r 8 a<<= 1 a&=b b=a a=r 6 a>>= 1 a|=b hashd d++\n"
+          
+          "  b=r 11 a=r 9 a-=b b=r 2 a+=b hashd d++\n"
+          "  b=r 17 a=r 9 a-=b b=r 3 a+=b hashd d++\n"
+          "  a=r 2 hashd b=r 11 a=r 9 a-=b hashd d++\n"
+          "  a=r 9 hashd a=r 10 hashd d++\n"
+          "  a=r 3 hashd b=r 17 a=r 9 a-=b hashd d++\n"
+          "  b=r 2 a=r 3 a+=b a>>= 3 hashd a=r 9 a>>= 4 hashd a=r 10 a>>= 4 hashd d++\n"
+          "  a=r 6 hashd a=r 8 a>>= 4 hashd d++\n"
+          "  a=r 2 hashd a=r 9 hashd a=r 10 hashd d++\n"
+          "  a=r 3 hashd d++\n"
+          "  a=r 3 hashd a=r 9 hashd a=r 10 hashd d++\n"
+          "  a=r 2 hashd d++\n"
+          "  a=r 2 hashd a=r 9 hashd d++\n"
+          "  a=r 3 hashd a=r 9 hashd d++\n"
+          "  d++\n"
+          
+          "  d=0\n"
+          "  do\n"
+          "    a=r 1 hashd d++\n"
+          "  a=d a< 24 while\n"
+          
+          "  a=r 9 a>>= 4 a*= 3 b=r 1 a+=b a<<= 9 *d=a (mix)\n"
+          "  d++\n"
+          "  a=r 1 a<<= 9 *d=a (mix)\n"
+          
+          "  d++ d++ d++ d++\n"
+          
+          "  a=r 3 (b=r 4 a-=b) b=r 2 a+=b a>>= 3 a*= 3 b=r 1 a+=b a<<= 9 *d=a (sse)\n"
+          "  c++\n"
+          "  halt\n"
+          "end\n";
+    return hdr;
+  }
+  
   // LZ77+Huffman, with or without E8E9
   if (level==1) {
     const int rb=args[0]>4 ? args[0]-4 : 0;
@@ -7394,24 +7527,27 @@ std::string makeConfig(const char* method, int args[]) {
       // special contexts
       hcomp+="d= "+itos(ncomp)+" *d=0\n";
       if (v[2]>1 && v[2]<=255) {  // periodic context
+          hcomp+="  (periodic context)\n";
         if (lg(v[2])!=lg(v[2]-1))
           hcomp+="a=c a&= "+itos(v[2]-1)+" hashd\n";
         else
           hcomp+="a=c a%= "+itos(v[2])+" hashd\n";
       }
-      else if (v[2]>=1000 && v[2]<=1255)  // distance context
+      else if (v[2]>=1000 && v[2]<=1255) { // distance context
+        hcomp+="  (distance context)\n";
         hcomp+="a= 255 a+= "+itos(v[2]-1000)+
                " d=a a=*d a-=c a> 255 if a= 255 endif d= "+
                itos(ncomp)+" hashd\n";
-
+      }
       // Masked context
       for (unsigned i=3; i<v.size(); ++i) {
         if (i==3) hcomp+="b=c ";
         if (v[i]==255)
-          hcomp+="a=*b hashd\n";  // ordinary byte
+          hcomp+="  (ordinary byte)\na=*b hashd\n";  // ordinary byte
         else if (v[i]>0 && v[i]<255)
-          hcomp+="a=*b a&= "+itos(v[i])+" hashd\n";  // masked byte
+          hcomp+="  (masked byte)\na=*b a&= "+itos(v[i])+" hashd\n";  // masked byte
         else if (v[i]>=256 && v[i]<512) { // lz77 state or masked literal byte
+            hcomp+="  (lz77 context)\n";
           hcomp+=
           "a=r 1 a> 1 if\n"  // expect literal or offset
           "  a=r 2 a< 64 if\n"  // expect literal
@@ -7426,7 +7562,7 @@ std::string makeConfig(const char* method, int args[]) {
           "endif\n";
         }
         else if (v[i]>=1256)  // skip v[i]-1000 bytes
-          hcomp+="a= "+itos(((v[i]-1000)>>8)&255)+" a<<= 8 a+= "
+          hcomp+="  (skip bytes)\na= "+itos(((v[i]-1000)>>8)&255)+" a<<= 8 a+= "
                +itos((v[i]-1000)&255)+
           " a+=b b=a\n";
         else if (v[i]>1000)
@@ -7457,6 +7593,9 @@ std::string makeConfig(const char* method, int args[]) {
         comp+=" sse "+itos(v[1])+" "+itos(ncomp-1)+" "+itos(v[2])+" "
             +itos(v[3])+"\n";
       if (v[1]>8 && ( v[3] == 0 && (v[0] == 'm' || v[0] == 't') || v[0] == 's')) {
+         if (v[0] == 'm') hcomp += "  (mixer context)\n";
+         if (v[0] == 't') hcomp += "  (mixer2 context)\n";
+         if (v[0] == 's') hcomp += "  (SSE context)\n";
         hcomp+="d= "+itos(ncomp)+" *d=0 b=c a=0\n";
         for (; v[1]>=16; v[1]-=8) {
           hcomp+="a<<= 8 a+=*b";
@@ -7467,6 +7606,7 @@ std::string makeConfig(const char* method, int args[]) {
           hcomp+="a<<= 8 a+=*b a>>= "+itos(16-v[1])+"\n";
         hcomp+="a<<= 8 *d=a\n";
       }else if (v[0] == 'm' && v[1] >= 8 && v[3] > 0) {
+          hcomp += "  (mixer context, high bits)\n";
           // use v[3] upper bits as mask for last byte and set as mixer context
           hcomp += "d= " + itos(ncomp) ;
           if (v[1] > 8){
@@ -7488,6 +7628,7 @@ std::string makeConfig(const char* method, int args[]) {
     // i: ISSE chain with order increasing by N1,N2...
     if (v[0]=='i' && ncomp>0) {
       assert(sb>=5);
+      hcomp += "  (ISSE chain)\n";
       hcomp+="d= "+itos(ncomp-1)+" b=c a=*d d++\n";
       for (unsigned i=1; i<v.size() && ncomp<254; ++i) {
         for (int j=0; j<v[i]%10; ++j) {
@@ -7506,6 +7647,7 @@ std::string makeConfig(const char* method, int args[]) {
 
     // a24,0,0: MATCH. N1=hash multiplier. N2,N3=halve buf, table.
     if (v[0]=='a') {
+        hcomp += "  (match)\n";
       if (v.size()<=1) v.push_back(24);
       while (v.size()<4) v.push_back(0);
       comp+=itos(ncomp)+" match "+itos(membits-v[3]-2)+" "
@@ -7521,6 +7663,7 @@ std::string makeConfig(const char* method, int args[]) {
     // Word is hashed by: hash := hash*N5+c+1
     // Decrease memory by 2^-N6.
     if (v[0]=='w') {
+        hcomp += "  (word)\n";
       if (v.size()<=1) v.push_back(1);
       if (v.size()<=2) v.push_back(65);
       if (v.size()<=3) v.push_back(26);
@@ -7548,6 +7691,7 @@ std::string makeConfig(const char* method, int args[]) {
       ++ncomp;
     }
   }
+
   return hdr+itos(ncomp)+"\n"+comp+hcomp+"halt\n"+pcomp;
 }
 
@@ -7571,14 +7715,16 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
   // Get type from method "LB,R,t" where L is level 0..5, B is block
   // size 0..11, R is redundancy 0..255, t = 0..3 = binary, text, exe, both.
   unsigned type=0;
+  unsigned special = 0;
   if (isdigit(method[0])) {
-    int commas=0, arg[4]={0};
-    for (int i=1; i<int(method.size()) && commas<4; ++i) {
+    int commas=0, arg[5]={0};
+    for (int i=1; i<int(method.size()) && commas<5; ++i) {
       if (method[i]==',' || method[i]=='.') ++commas;
       else if (isdigit(method[i])) arg[commas]=arg[commas]*10+method[i]-'0';
     }
     if (commas==0) type=512;
     else type=arg[1]*4+arg[2];
+    special = arg[3] == 1; 
   }
 
   // Get hash of input
@@ -7645,7 +7791,9 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // LZ77+CM, fast CM, or BWT depending on type
     else if (level==4) {
-      if (type<12)
+      if (special) 
+        method += ",8"; // bmp
+      else if (type<12)
         method+=",0";
       else if (type<24)
         method+=","+itos(1+doe8)+",4,0,3"+htsz;
@@ -7667,12 +7815,18 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // Slow CM with lots of models
     else {  // 5..9
-
+      if (special) 
+          method += ",8"; //bmp
+      else if (type<5) // store if not compressible
+          method += ",0";
+      else {
       // Model text files
       method+=","+itos(doe8);
-      if (type&1) method+="w2c0,1010,255i1";
+      if ((type&1) && type>100) method += "w2,65,26,223,191,0c0,1010,255i1";
+      else if (type&1) method+="w2c0,1010,255i1";
       else method+="w1i1";
-      method+="c256ci1,1,1,1,1,1,2a";
+      if (type&1) method+="c256ci1,1,1,1,1,2,2a";
+      else method+="c256ci1,1,1,1,1,1,2a";
 
       // Analyze the data
       const int NR=1<<12;
@@ -7708,7 +7862,9 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
         else
           break;
       }
-      method+="c0,2,0,255i1c0,3,0,0,255i1c0,4,0,0,0,255i1mm16ts19t0";
+      if ((type&1) && (type>100)) method += "m10,4,1m16ts19t0";
+      else method+="c0,2,0,255i1c0,3,0,0,255i1c0,4,0,0,0,255i1mm16ts19t0";
+      }
     }
   }
 

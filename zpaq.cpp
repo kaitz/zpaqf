@@ -2100,6 +2100,24 @@ struct WriterPair: public libzpaq::Writer {
   }
   WriterPair(): a(0), b(0) {}
 };
+// not used
+struct BmpFileHeader {
+    unsigned short sig;
+    unsigned int bfSize;
+    unsigned int bfReserved1;
+    unsigned long int bfOffBits;
+    unsigned int biSize;
+    int biWidth;
+    int biHeight;
+    unsigned short int biPlanes;
+    unsigned short int biBitCount;
+    unsigned int biCompression;
+    unsigned int biSizeImage;
+    int biXPelsPerMeter;
+    int biYPelPerMeter;
+    unsigned int biClrUsed;
+    unsigned int biClrImportant;
+};
 
 // Add or delete files from archive. Return 1 if error else 0.
 int Jidac::add() {
@@ -2346,7 +2364,9 @@ int Jidac::add() {
   // reserve space for the header block
   writeJidacHeader(&out, date, -1, htsize);
   const int64_t header_end=out.tell();
-
+  int pfData=0;
+  int pfState=0; // 0 start, 1 header
+  int isBMP=0;
   // Compress until end of last file
   assert(method!="");
   StringBuffer sb(blocksize+4096-128);  // block to compress
@@ -2365,6 +2385,8 @@ int Jidac::add() {
     const int BUFSIZE=4096;  // input buffer
     char buf[BUFSIZE];
     int bufptr=0, buflen=0;  // read pointer and limit
+    int64_t infSize = 0;
+    std::string ext="";
     if (fi<vf.size()) {
       assert(vf[fi]->second.ptr.size()==0);
       DTMap::iterator p=vf[fi];
@@ -2379,11 +2401,14 @@ int Jidac::add() {
         ++errors;
         continue;
       }
+      infSize = p->second.size;
       p->second.data=1;  // add
+      ext = p->first.substr(p->first.size() - 4);
     }
 
     // Read fragments
     int64_t fsize=0;  // file size after dedupe
+    pfState = 0;
     for (unsigned fj=0; true; ++fj) {
       int64_t sz=0;  // fragment size;
       unsigned hits=0;  // correct prediction count
@@ -2398,6 +2423,19 @@ int Jidac::add() {
         assert(in!=FPNULL);
         while (true) {
           if (bufptr>=buflen) bufptr=0, buflen=fread(buf, 1, BUFSIZE, in);
+          // detect BMP 24bit
+          if (ext == ".bmp" && bufptr==0 && buflen== BUFSIZE && pfState==0) {
+              tagBITMAPFILEHEADER &bmpHdr = (tagBITMAPFILEHEADER&)buf; 
+              if (bmpHdr.bfType == 'MB' && int64_t(bmpHdr.bfSize) == infSize && blocksize > int64_t(bmpHdr.bfSize) && bmpHdr.bfSize >256 && bmpHdr.bfOffBits==54 &&
+                  bmpHdr.bfReserved1==0 && bmpHdr.bfReserved1 == 0) {
+                  tagBITMAPINFOHEADER& bmpInfo = (tagBITMAPINFOHEADER&)buf[sizeof(tagBITMAPFILEHEADER)];
+                  if (bmpInfo.biWidth  <0xffff && bmpInfo.biWidth  > 16 && bmpInfo.biBitCount == 24 && bmpInfo.biCompression==0 && bmpInfo.biPlanes==1) {
+                    pfState = 1;
+                    pfData = bmpHdr.bfSize;
+                  }
+              }
+          }
+          // process fragment
           if (bufptr>=buflen) c=EOF;
           else c=(unsigned char)buf[bufptr++];
           if (c!=EOF) {
@@ -2489,9 +2527,12 @@ int Jidac::add() {
         if (sb.size()+sz+80+frags*4>=blocksize) newblock=true; // full?
         if (fi==vf.size()) newblock=true;  // last file?
         if (frags<1) newblock=false;  // block is empty?
-
+        // foce new block before and after BMP image
+        if (isBMP &&  fsize==0) newblock = true; // file was BMP
+        else if (sb.size() >0 && pfData && fsize == 0) newblock = true; // insert first BMP fragment
         // Pad sb with fragment size list, then compress
         if (newblock) {
+            //printf(" frags %d bmp %d\n", frags, isBMP);
           assert(frags>0);
           assert(frags<ht.size());
           for (unsigned i=ht.size()-frags; i<ht.size(); ++i)
@@ -2501,7 +2542,7 @@ int Jidac::add() {
           string m=method;
           if (isdigit(method[0]))
             m+=","+itos(redundancy/(sb.size()/256+1))
-                 +","+itos((exe>frags)*2+(text>frags));
+                 +","+itos((exe>frags)*2+(text>frags))+"," +itos(isBMP);
           string fn="jDC"+itos(date, 14)+"d"+itos(ht.size()-frags, 10);
           print_progress(total_size, total_done, summary);
           if (summary<=0)
@@ -2516,7 +2557,7 @@ int Jidac::add() {
           }
           assert(sb.size()==0);
           blocklist.push_back(ht.size()-frags);  // mark block start
-          frags=redundancy=text=exe=0;
+          frags=redundancy=text=exe=pfState=isBMP=0;
           memset(o1prev, 0, sizeof(o1prev));
         }
 
@@ -2525,7 +2566,7 @@ int Jidac::add() {
         sb.write(&fragbuf[0], sz);
         ++frags;
         redundancy+=hits;
-        exe+=exe1*4;
+        exe+=exe1*(3+(fragment>=6));
         text+=text1*2;
         if (sz>=MIN_FRAGMENT) {
           memmove(o1prev, o1prev+256, 256*(ON-1));
@@ -2543,7 +2584,11 @@ int Jidac::add() {
         }
         vf[fi]->second.ptr.push_back(htptr);
       }
-      if (c==EOF) break;
+      if (c == EOF) {
+        // force BMP if processed data is image size, skip if deduped
+        if (pfData && fsize == pfData) isBMP = 1, pfData=0; 
+        break;
+      }
     }  // end for each fragment fj
     if (fi<vf.size()) {
       dedupesize+=fsize;
