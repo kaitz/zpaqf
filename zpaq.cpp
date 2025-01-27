@@ -2100,24 +2100,6 @@ struct WriterPair: public libzpaq::Writer {
   }
   WriterPair(): a(0), b(0) {}
 };
-// not used
-struct BmpFileHeader {
-    unsigned short sig;
-    unsigned int bfSize;
-    unsigned int bfReserved1;
-    unsigned long int bfOffBits;
-    unsigned int biSize;
-    int biWidth;
-    int biHeight;
-    unsigned short int biPlanes;
-    unsigned short int biBitCount;
-    unsigned int biCompression;
-    unsigned int biSizeImage;
-    int biXPelsPerMeter;
-    int biYPelPerMeter;
-    unsigned int biClrUsed;
-    unsigned int biClrImportant;
-};
 
 // Add or delete files from archive. Return 1 if error else 0.
 int Jidac::add() {
@@ -2375,6 +2357,7 @@ int Jidac::add() {
   unsigned text=0;     // number of fragents containing text
   unsigned exe=0;      // number of fragments containing x86 (exe, dll)
   const int ON=4;      // number of order-1 tables to save
+  const int level=isdigit(method[0])?(method[0]-'0'):-1;
   unsigned char o1prev[ON*256]={0};  // last ON order 1 predictions
   libzpaq::Array<char> fragbuf(MAX_FRAGMENT);
   vector<unsigned> blocklist;  // list of starting fragments
@@ -2423,15 +2406,15 @@ int Jidac::add() {
         assert(in!=FPNULL);
         while (true) {
           if (bufptr>=buflen) bufptr=0, buflen=fread(buf, 1, BUFSIZE, in);
-          // detect BMP 24bit
-          if (ext == ".bmp" && bufptr==0 && buflen== BUFSIZE && pfState==0) {
-              tagBITMAPFILEHEADER &bmpHdr = (tagBITMAPFILEHEADER&)buf; 
-              if (bmpHdr.bfType == 'MB' && int64_t(bmpHdr.bfSize) == infSize && blocksize > int64_t(bmpHdr.bfSize) && bmpHdr.bfSize >256 && bmpHdr.bfOffBits==54 &&
-                  bmpHdr.bfReserved1==0 && bmpHdr.bfReserved1 == 0) {
-                  tagBITMAPINFOHEADER& bmpInfo = (tagBITMAPINFOHEADER&)buf[sizeof(tagBITMAPFILEHEADER)];
-                  if (bmpInfo.biWidth  <0xffff && bmpInfo.biWidth  > 16 && bmpInfo.biBitCount == 24 && bmpInfo.biCompression==0 && bmpInfo.biPlanes==1) {
+          // detect BMP 24bit at level 4 and up
+          if (level>3 && ext==".bmp" && bufptr==0 && buflen==BUFSIZE && pfState==0) {
+              tagBITMAPFILEHEADER &bmHdr = (tagBITMAPFILEHEADER&)buf; 
+              if (bmHdr.bfType=='MB' && uint32_t(bmHdr.bfSize)==infSize && blocksize>uint32_t(bmHdr.bfSize) && bmHdr.bfSize>256 && 
+                  bmHdr.bfOffBits==54 && bmHdr.bfReserved1==0 && bmHdr.bfReserved2==0) {
+                  tagBITMAPINFOHEADER& bmInfo = (tagBITMAPINFOHEADER&)buf[sizeof(tagBITMAPFILEHEADER)];
+                  if (bmInfo.biWidth<0xffff && bmInfo.biWidth>16 && bmInfo.biBitCount==24 && bmInfo.biCompression==0 && bmInfo.biPlanes==1) {
                     pfState = 1;
-                    pfData = bmpHdr.bfSize;
+                    pfData = bmHdr.bfSize;
                   }
               }
           }
@@ -2532,7 +2515,6 @@ int Jidac::add() {
         else if (sb.size() >0 && pfData && fsize == 0) newblock = true; // insert first BMP fragment
         // Pad sb with fragment size list, then compress
         if (newblock) {
-            //printf(" frags %d bmp %d\n", frags, isBMP);
           assert(frags>0);
           assert(frags<ht.size());
           for (unsigned i=ht.size()-frags; i<ht.size(); ++i)
@@ -2662,7 +2644,7 @@ int Jidac::add() {
       }
       ++removed;
       if (is.size()>16000) {
-        libzpaq::compressBlock(&is, &wp, "1",
+        libzpaq::compressBlock(&is, &wp, "3",
             ("jDC"+itos(date)+"i"+itos(++dtcount, 10)).c_str(), "jDC\x01");
         is.resize(0);
       }
@@ -2710,7 +2692,7 @@ int Jidac::add() {
       }
     }
     if (is.size()>16000 || (is.size()>0 && p==edt.end())) {
-      libzpaq::compressBlock(&is, &wp, "1",
+      libzpaq::compressBlock(&is, &wp, "3",
           ("jDC"+itos(date)+"i"+itos(++dtcount, 10)).c_str(), "jDC\x01");
       is.resize(0);
     }
