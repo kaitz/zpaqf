@@ -2392,7 +2392,7 @@ int Jidac::add() {
     // Read fragments
     int64_t fsize=0;  // file size after dedupe
     isBMP = pfState;
-    pfState =  0;
+    pfState=0;
     for (unsigned fj=0; true; ++fj) {
       int64_t sz=0;  // fragment size;
       unsigned hits=0;  // correct prediction count
@@ -2551,6 +2551,7 @@ int Jidac::add() {
           }
           assert(sb.size()==0);
           blocklist.push_back(ht.size()-frags);  // mark block start
+          if (isBMP==0 && pfState==0) pfData = 0;
           frags=redundancy=text=exe=0;
           memset(o1prev, 0, sizeof(o1prev));
         }
@@ -2578,7 +2579,11 @@ int Jidac::add() {
         }
         vf[fi]->second.ptr.push_back(htptr);
       }
-      if (c==EOF) break;
+      if (c == EOF) {
+          // reset BMP if deduplicated
+          if (pfState && fsize != pfData) pfState=0;
+          break;
+      }
     }  // end for each fragment fj
     if (fi<vf.size()) {
       dedupesize+=fsize;
