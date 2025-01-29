@@ -6919,42 +6919,44 @@ std::string makeConfig(const char* method, int args[]) {
   const bool dobmp = args[1] == 8;
 
   if (dobmp) {
-    int blev = min(5,args[0]);
-    hdr = "comp 17 17 0 3 33 (hh hm ph pm n)\n"
+    // 24 bit image model
+    int blev = min(4,args[0])+1;
+    const int bmcm = 11;
+    hdr = "comp 17 17 0 3 21 (hh hm ph pm n)\n"
           "  0 const 160\n"
           "  1 cm "+itos(20+ blev)+" 255\n"
+         // "  2 cm " + itos(20 + blev) + " 255\n"
           "  2 cm " + itos(20 + blev) + " 255\n"
+         // "  4 cm " + itos(20 + blev) + " 255\n"
           "  3 cm " + itos(20 + blev) + " 255\n"
+         // "  6 cm " + itos(20 + blev) + " 255\n"
           "  4 cm " + itos(20 + blev) + " 255\n"
           "  5 cm " + itos(20 + blev) + " 255\n"
-          "  6 cm " + itos(20 + blev) + " 255\n"
-          "  7 cm " + itos(20 + blev) + " 255\n"
-          "  8 cm " + itos(20 + blev) + " 255\n"
-          "  9 icm " + itos(16 + blev) + "\n"
+          "  6 icm " + itos(16 + blev) + "\n"
+         // "  10 cm " + itos(20 + blev) + " 255\n"
+          "  7 icm " + itos(16 + blev) + "\n"
+         // "  12 cm " + itos(20 + blev) + " 255\n"
+          "  8 icm " + itos(16 + blev) + "\n"
+         // "  14 cm " + itos(20 + blev) + " 255\n"
+         // "  15 icm " + itos(16 + blev) + "\n"
+         // "  16 cm " + itos(20 + blev) + " 255\n"
+          "  9 cm " + itos(20 + blev) + " 255\n"
+         // "  18 cm " + itos(20 + blev) + " 255\n"
           "  10 cm " + itos(20 + blev) + " 255\n"
-          "  11 icm " + itos(16 + blev) + "\n"
-          "  12 cm " + itos(20 + blev) + " 255\n"
-          "  13 icm " + itos(16 + blev) + "\n"
-          "  14 cm " + itos(20 + blev) + " 255\n"
-          "  15 icm " + itos(16 + blev) + "\n"
-          "  16 cm " + itos(20 + blev) + " 255\n"
-          "  17 cm " + itos(20 + blev) + " 255\n"
-          "  18 cm " + itos(20 + blev) + " 255\n"
-          "  19 cm " + itos(20 + blev) + " 255\n"
-          "  20 cm " + itos(20 + blev) + " 255\n"
-          "  21 icm " + itos(16 + blev) + "\n"
-          "  22 icm " + itos(16 + blev) + "\n"
-          "  23 cm 11 255\n"
+         // "  20 cm " + itos(20 + blev) + " 255\n"
+         // "  21 icm " + itos(16 + blev) + "\n"
+         // "  22 icm " + itos(16 + blev) + "\n"
+          "  11 cm 11 255\n"
           
-          "  24 mix 16 0 24 16 255\n"
-          "  25 mix 11 0 25 20 255\n"
-          "  26 mix2 0 24 25 40 0\n"
-          "  27 mix 0 0 26 32 0\n"
-          "  28 mix2 0 26 27 40 0\n"
-          "  29 sse 16 28 8 255\n"
-          "  30 mix2 8 28 29 40 255\n"
-          "  31 sse 8 30 8 255\n"
-          "  32 mix2 0 30 31 40 0\n"
+          "  12 mix 16  0 " + itos(bmcm + 1) + " 16 255\n"
+          "  13 mix 11  0 " + itos(bmcm + 2) + " 20 255\n"
+          "  14 mix2 0 " + itos(bmcm + 1) + " " + itos(bmcm + 2) + " 40 0\n"
+          "  15 mix  0  0 " + itos(bmcm + 3) + " 32 0\n"
+          "  16 mix2 0 " + itos(bmcm + 3) + " " + itos(bmcm + 4) + " 40 0\n"
+          "  17 sse 16 " + itos(bmcm + 5) + "  8 255\n"
+          "  18 mix2 8 " + itos(bmcm + 5) + " " + itos(bmcm + 6) + " 40 255\n"
+          "  19 sse  8 " + itos(bmcm + 7) + "  8 255\n"
+          "  20 mix2 0 " + itos(bmcm + 7) + " " + itos(bmcm + 8) + " 40 0\n"
           
           "hcomp\n"
           "  *c=a (save in rotating buffer)\n"
@@ -6994,48 +6996,48 @@ std::string makeConfig(const char* method, int args[]) {
           
           "  b=c a=*b r=a 9 (r9=buf(1))\n"
           "  b=c b-- a=*b r=a 10 (r10=buf(2))\n"
-          "  a=c a-= 3 b=a a=*b r=a 11 (r11=buf(4))\n"
+        // "  a=c a-= 3 b=a a=*b r=a 11 (r11=buf(4))\n"
           "  a=c a-= 5 b=a a=*b r=a 12 (r12=buf(6))\n"
-          "  a=c a++ b=r 0 a-=b a-=b b=a a=*b r=a 13 (r13=buf(w*2))\n"
+        // "  a=c a++ b=r 0 a-=b a-=b b=a a=*b r=a 13 (r13=buf(w*2))\n"
           "  a=c a+= 7 b=r 0 a-=b a-=b b=a a=*b r=a 14 (r14=buf(w*2-6))\n"
           "  a=c a+= 4 b=r 0 a-=b a-=b b=a a=*b r=a 15 (r15=buf(w*2-3))\n"
           "  a=c a-= 5 b=r 0 a-=b a-=b b=a a=*b r=a 16 (r16=buf(w*2+6))\n"
           "  a=c b=r 0 a-=b b=a a=*b r=a 17 (r17=buf(w+1))\n"
           "  a=c a+= 3 b=r 0 a-=b b=a a=*b r=a 18 (r18=buf(w-2))\n"
           
-          "  d=0 do *d=0 d++ a=d a< 24 while\n"
+          "  d=0 do *d=0 d++ a=d a< 12 while\n"
           
-          "  d=0\n"
+          "  d=0 a=r 2 b=r 3 a+=b a>>= 3 hashd a=r 9 a>>= 4 hashd a=r 10 a>>= 4 hashd ( =(buf(3)+buf(w))>>3, buf(1)>>4, buf(2)>>4 ) \n"
           "  d++\n"
           "  a=r 3 b=r 4 a-=b b=r 2 a+=b hashd d++\n"
-          "  a=r 2 b=r 3 a-=b b=r 5 a+=b hashd d++\n"
+        // "  a=r 2 b=r 3 a-=b b=r 5 a+=b hashd d++\n"
           "  a=r 2 a*= 2 b=r 12 a-=b hashd d++\n"
-          "  a=r 3 a*= 2 b=r 13 a-=b hashd d++\n"
+        // "  a=r 3 a*= 2 b=r 13 a-=b hashd d++\n"
           "  a=r 4 a*= 2 b=r 16 a-=b hashd d++\n"
-          "  a=r 5 a*= 2 b=r 14 a-=b hashd d++\n"
+        // "  a=r 5 a*= 2 b=r 14 a-=b hashd d++\n"
           "  a=r 9 b=r 18 a-=b b=r 5 a+=b hashd d++\n"
           "  a=r 3 b=r 15 a-=b b=r 5 a+=b hashd d++\n"
           "  a= 24 a*= 16 b=a a=r 8 a<<= 1 a&=b b=a a=r 6 a>>= 1 a|=b hashd d++\n"
           
-          "  b=r 11 a=r 9 a-=b b=r 2 a+=b hashd d++\n"
+        // "  b=r 11 a=r 9 a-=b b=r 2 a+=b hashd d++\n"
           "  b=r 17 a=r 9 a-=b b=r 3 a+=b hashd d++\n"
-          "  a=r 2 hashd b=r 11 a=r 9 a-=b hashd d++\n"
+        // "  a=r 2 hashd b=r 11 a=r 9 a-=b hashd d++\n"
           "  a=r 9 hashd a=r 10 hashd d++\n"
-          "  a=r 3 hashd b=r 17 a=r 9 a-=b hashd d++\n"
-          "  b=r 2 a=r 3 a+=b a>>= 3 hashd a=r 9 a>>= 4 hashd a=r 10 a>>= 4 hashd d++\n"
-          "  a=r 6 hashd a=r 8 a>>= 4 hashd d++\n"
+        // "  a=r 3 hashd b=r 17 a=r 9 a-=b hashd d++\n"
+        // "  b=r 2 a=r 3 a+=b a>>= 3 hashd a=r 9 a>>= 4 hashd a=r 10 a>>= 4 hashd d++\n"
+        // "  a=r 6 hashd a=r 8 a>>= 4 hashd d++\n"
           "  a=r 2 hashd a=r 9 hashd a=r 10 hashd d++\n"
-          "  a=r 3 hashd d++\n"
+        // "  a=r 3 hashd d++\n"
           "  a=r 3 hashd a=r 9 hashd a=r 10 hashd d++\n"
-          "  a=r 2 hashd d++\n"
-          "  a=r 2 hashd a=r 9 hashd d++\n"
+        //  "  a=r 2 hashd d++\n"
+        //  "  a=r 2 hashd a=r 9 hashd d++\n"
           "  a=r 3 hashd a=r 9 hashd d++\n"
           "  d++\n"
-          
+         
           "  d=0\n"
           "  do\n"
           "    a=r 1 hashd d++\n"
-          "  a=d a< 24 while\n"
+          "  a=d a< 12 while\n"
           
           "  a=r 9 a>>= 4 a*= 3 b=r 1 a+=b a<<= 9 *d=a (mix)\n"
           "  d++\n"
@@ -7724,7 +7726,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
     }
     if (commas==0) type=512;
     else type=arg[1]*4+arg[2];
-    special = arg[3] == 1; 
+    special = arg[3] ; 
   }
 
   // Get hash of input
@@ -7791,8 +7793,10 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // LZ77+CM, fast CM, or BWT depending on type
     else if (level==4) {
-      if (special) 
-        method += ",8"; // bmp
+      if (special==1) 
+        method += ",8"; // bmp 24
+      else if (special==2 ||  special==3 || special==4)
+          method += ",ci1"; // bmp 1,4,8
       else if (type<12)
         method+=",0";
       else if (type<24)
@@ -7815,8 +7819,10 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // Slow CM with lots of models
     else {  // 5..9
-      if (special) 
+      if (special==1)
           method += ",8"; //bmp
+      else if (special==2 || special==3 || special==4)
+          method += ",ci1"; // bmp 1,4,8
       else if (type<5) // store if not compressible
           method += ",0";
       else {

@@ -2391,7 +2391,8 @@ int Jidac::add() {
 
     // Read fragments
     int64_t fsize=0;  // file size after dedupe
-    pfState = 0;
+    isBMP = pfState;
+    pfState =  0;
     for (unsigned fj=0; true; ++fj) {
       int64_t sz=0;  // fragment size;
       unsigned hits=0;  // correct prediction count
@@ -2406,15 +2407,26 @@ int Jidac::add() {
         assert(in!=FPNULL);
         while (true) {
           if (bufptr>=buflen) bufptr=0, buflen=fread(buf, 1, BUFSIZE, in);
-          // detect BMP 24bit at level 4 and up
+          // detect BMP 1,4,8,24 bit at level 4 and up
           if (level>3 && ext==".bmp" && bufptr==0 && buflen==BUFSIZE && pfState==0) {
               tagBITMAPFILEHEADER &bmHdr = (tagBITMAPFILEHEADER&)buf; 
               if (bmHdr.bfType=='MB' && uint32_t(bmHdr.bfSize)==infSize && blocksize>uint32_t(bmHdr.bfSize) && bmHdr.bfSize>256 && 
-                  bmHdr.bfOffBits==54 && bmHdr.bfReserved1==0 && bmHdr.bfReserved2==0) {
+                  (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078 || bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved1==0 && bmHdr.bfReserved2==0) {
                   tagBITMAPINFOHEADER& bmInfo = (tagBITMAPINFOHEADER&)buf[sizeof(tagBITMAPFILEHEADER)];
-                  if (bmInfo.biWidth<0xffff && bmInfo.biWidth>16 && bmInfo.biBitCount==24 && bmInfo.biCompression==0 && bmInfo.biPlanes==1) {
-                    pfState = 1;
-                    pfData = bmHdr.bfSize;
+                  if (bmInfo.biWidth<0xffff && bmInfo.biWidth>16 && bmInfo.biCompression==0 && bmInfo.biPlanes==1) {
+                      if (bmInfo.biBitCount==24 && bmHdr.bfOffBits==54) {
+                          pfState=1;
+                          pfData=bmHdr.bfSize;
+                      } else if (bmInfo.biBitCount==8 && bmHdr.bfOffBits==1078) {
+                          pfState=2;
+                          pfData=bmHdr.bfSize;
+                      } else if (bmInfo.biBitCount==1 && bmHdr.bfOffBits==62) {
+                          pfState=3;
+                          pfData=bmHdr.bfSize;
+                      } else if (bmInfo.biBitCount==4 && bmHdr.bfOffBits==118) {
+                          pfState=4;
+                          pfData=bmHdr.bfSize;
+                      }
                   }
               }
           }
@@ -2512,7 +2524,7 @@ int Jidac::add() {
         if (frags<1) newblock=false;  // block is empty?
         // foce new block before and after BMP image
         if (isBMP &&  fsize==0) newblock = true; // file was BMP
-        else if (sb.size() >0 && pfData && fsize == 0) newblock = true; // insert first BMP fragment
+        else if (sb.size()>0 && pfData && fsize==0) newblock = true; // insert first BMP fragment
         // Pad sb with fragment size list, then compress
         if (newblock) {
           assert(frags>0);
@@ -2539,7 +2551,7 @@ int Jidac::add() {
           }
           assert(sb.size()==0);
           blocklist.push_back(ht.size()-frags);  // mark block start
-          frags=redundancy=text=exe=pfState=isBMP=0;
+          frags=redundancy=text=exe=0;
           memset(o1prev, 0, sizeof(o1prev));
         }
 
@@ -2566,11 +2578,7 @@ int Jidac::add() {
         }
         vf[fi]->second.ptr.push_back(htptr);
       }
-      if (c == EOF) {
-        // force BMP if processed data is image size, skip if deduped
-        if (pfData && fsize == pfData) isBMP = 1, pfData=0; 
-        break;
-      }
+      if (c==EOF) break;
     }  // end for each fragment fj
     if (fi<vf.size()) {
       dedupesize+=fsize;
