@@ -2346,9 +2346,9 @@ int Jidac::add() {
   // reserve space for the header block
   writeJidacHeader(&out, date, -1, htsize);
   const int64_t header_end=out.tell();
-  int pfData=0;
+  int pfData=0,imbWidth=0;
   int pfState=0; // 0 start, 1 header
-  int isBMP=0;
+  int isBMP=0,info=0;
   // Compress until end of last file
   assert(method!="");
   StringBuffer sb(blocksize+4096-128);  // block to compress
@@ -2386,13 +2386,14 @@ int Jidac::add() {
       }
       infSize = p->second.size;
       p->second.data=1;  // add
-      ext = p->first.substr(p->first.size() - 4);
+      ext=p->first.substr(p->first.size() - 4);
     }
 
     // Read fragments
     int64_t fsize=0;  // file size after dedupe
-    isBMP = pfState;
-    pfState=0;
+    isBMP=pfState;
+    info=imbWidth;
+    pfState=imbWidth=0;
     for (unsigned fj=0; true; ++fj) {
       int64_t sz=0;  // fragment size;
       unsigned hits=0;  // correct prediction count
@@ -2417,15 +2418,19 @@ int Jidac::add() {
                       if (bmInfo.biBitCount==24 && bmHdr.bfOffBits==54) {
                           pfState=1;
                           pfData=bmHdr.bfSize;
+                          imbWidth=((bmInfo.biWidth*3)+3)&-4;
                       } else if (bmInfo.biBitCount==8 && bmHdr.bfOffBits==1078) {
                           pfState=2;
                           pfData=bmHdr.bfSize;
+                          imbWidth=(bmInfo.biWidth+3)&-4;
                       } else if (bmInfo.biBitCount==1 && bmHdr.bfOffBits==62) {
                           pfState=3;
                           pfData=bmHdr.bfSize;
+                          imbWidth=(((bmInfo.biWidth-1)>>5)+1)*4;
                       } else if (bmInfo.biBitCount==4 && bmHdr.bfOffBits==118) {
                           pfState=4;
                           pfData=bmHdr.bfSize;
+                          imbWidth=((bmInfo.biWidth*4+31)>>5)*4;
                       }
                   }
               }
@@ -2536,7 +2541,7 @@ int Jidac::add() {
           string m=method;
           if (isdigit(method[0]))
             m+=","+itos(redundancy/(sb.size()/256+1))
-                 +","+itos((exe>frags)*2+(text>frags))+"," +itos(isBMP);
+                 +","+itos((exe>frags)*2+(text>frags))+"," +itos(isBMP)+"," + itos(info);
           string fn="jDC"+itos(date, 14)+"d"+itos(ht.size()-frags, 10);
           print_progress(total_size, total_done, summary);
           if (summary<=0)
@@ -2581,7 +2586,7 @@ int Jidac::add() {
       }
       if (c == EOF) {
           // reset BMP if deduplicated
-          if (pfState && fsize != pfData) pfState=0;
+          if (pfState && fsize != pfData) pfState=0, imbWidth=0;
           break;
       }
     }  // end for each fragment fj

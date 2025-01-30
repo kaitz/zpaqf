@@ -7717,16 +7717,17 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
   // Get type from method "LB,R,t" where L is level 0..5, B is block
   // size 0..11, R is redundancy 0..255, t = 0..3 = binary, text, exe, both.
   unsigned type=0;
-  unsigned special = 0;
+  unsigned special = 0,info=0; //image type, info about image
   if (isdigit(method[0])) {
-    int commas=0, arg[5]={0};
-    for (int i=1; i<int(method.size()) && commas<5; ++i) {
+    int commas=0, arg[6]={0};
+    for (int i=1; i<int(method.size()) && commas<6; ++i) {
       if (method[i]==',' || method[i]=='.') ++commas;
       else if (isdigit(method[i])) arg[commas]=arg[commas]*10+method[i]-'0';
     }
     if (commas==0) type=512;
     else type=arg[1]*4+arg[2];
-    special = arg[3] ; 
+    special = arg[3]; 
+    info = arg[4];
   }
 
   // Get hash of input
@@ -7793,10 +7794,14 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // LZ77+CM, fast CM, or BWT depending on type
     else if (level==4) {
-      if (special==1) 
-        method += ",8"; // bmp 24
-      else if (special==2 ||  special==3 || special==4)
-          method += ",ci1"; // bmp 1,4,8
+      if (special==1)        // bmp
+          method+=",8";      // 24 it
+      else if (special==3)   // 1 bit
+          method+=",c0.0.7."+itos(info-2+1000)+".255i2";
+      else if (special == 4) // 4 bit
+          method+=",c0.0.15." + itos(info-2+1000)+".255i2";
+      else if (special==2)   // 8 bit
+          method+=",c0.0.255."+itos(info-2+1000)+".255i2";
       else if (type<12)
         method+=",0";
       else if (type<24)
@@ -7819,12 +7824,16 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // Slow CM with lots of models
     else {  // 5..9
-      if (special==1)
-          method += ",8"; //bmp
-      else if (special==2 || special==3 || special==4)
-          method += ",ci1"; // bmp 1,4,8
+      if (special==1)      //bmp
+          method+=",8";    // 24 it
+      else if (special==3) // 1 bit
+          method+=",c0.0.7." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2m10,4,0";
+      else if (special==4) // 4 bit
+          method+=",c0.0.15." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2m10,4,0";
+      else if (special==2) // 8 it
+          method+=",c0.0.255."+itos(info-2+1000)+".255i2c0.0.255."+itos(info*2-2+1000)+".255i2m";
       else if (type<5) // store if not compressible
-          method += ",0";
+          method+=",0";
       else {
       // Model text files
       method+=","+itos(doe8);
