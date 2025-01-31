@@ -2409,9 +2409,9 @@ int Jidac::add() {
         while (true) {
           if (bufptr>=buflen) bufptr=0, buflen=fread(buf, 1, BUFSIZE, in);
           // detect BMP 1,4,8,24 bit at level 4 and up
-          if (level>3 && ext==".bmp" && bufptr==0 && buflen==BUFSIZE && pfState==0) {
-              tagBITMAPFILEHEADER &bmHdr = (tagBITMAPFILEHEADER&)buf; 
-              if (bmHdr.bfType=='MB' && uint32_t(bmHdr.bfSize)==infSize && blocksize>uint32_t(bmHdr.bfSize) && bmHdr.bfSize>256 && 
+          if (level>2 && ext==".bmp" && bufptr==0 && buflen==BUFSIZE && pfState==0) {
+              tagBITMAPFILEHEADER &bmHdr = (tagBITMAPFILEHEADER&)buf;
+              if (bmHdr.bfType=='MB' && uint32_t(bmHdr.bfSize)==infSize && blocksize>uint32_t(bmHdr.bfSize) && bmHdr.bfSize>256 &&
                   (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078 || bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved1==0 && bmHdr.bfReserved2==0) {
                   tagBITMAPINFOHEADER& bmInfo = (tagBITMAPINFOHEADER&)buf[sizeof(tagBITMAPFILEHEADER)];
                   if (bmInfo.biWidth<0xffff && bmInfo.biWidth>16 && bmInfo.biCompression==0 && bmInfo.biPlanes==1) {

@@ -7782,7 +7782,13 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // LZ77 with CM depending on redundancy
     else if (level==3) {
-      if (type<20)  // store if not compressible
+      if (special==1 || special==2) // bmp 24, 8 bit
+        method+=",c0.0.255."+itos(info-2+1000)+".255";
+      else if (special==3) // 1 bit
+        method+=",c0.0.7."+itos(info-2+1000)+".255";
+      else if (special==4) // 4 bit
+        method+=",c0.0.15."+itos(info-2+1000)+".255";
+      else if (type<20)  // store if not compressible
         method+=",0";
       else if (type<48)  // fast LZ77 if barely compressible
         method+=","+itos(1+doe8)+",4,0,3"+htsz;
@@ -7795,10 +7801,10 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
     // LZ77+CM, fast CM, or BWT depending on type
     else if (level==4) {
       if (special==1)        // bmp
-          method+=",8";      // 24 it
+          method+=",8";      // 24 bit
       else if (special==3)   // 1 bit
           method+=",c0.0.7."+itos(info-2+1000)+".255i2";
-      else if (special == 4) // 4 bit
+      else if (special==4)   // 4 bit
           method+=",c0.0.15." + itos(info-2+1000)+".255i2";
       else if (special==2)   // 8 bit
           method+=",c0.0.255."+itos(info-2+1000)+".255i2";
@@ -7825,7 +7831,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
     // Slow CM with lots of models
     else {  // 5..9
       if (special==1)      //bmp
-          method+=",8";    // 24 it
+          method+=",8";    // 24 bit
       else if (special==3) // 1 bit
           method+=",c0.0.7." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2m10,4,0";
       else if (special==4) // 4 bit
