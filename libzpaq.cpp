@@ -6920,32 +6920,20 @@ std::string makeConfig(const char* method, int args[]) {
 
   if (dobmp) {
     // 24 bit image model
-    int blev = min(4,args[0])+1;
+    int blev = std::min(4,args[0])+1;
     const int bmcm = 11;
     hdr = "comp 17 17 0 3 21 (hh hm ph pm n)\n"
           "  0 const 160\n"
           "  1 cm "+itos(20+ blev)+" 255\n"
-         // "  2 cm " + itos(20 + blev) + " 255\n"
           "  2 cm " + itos(20 + blev) + " 255\n"
-         // "  4 cm " + itos(20 + blev) + " 255\n"
           "  3 cm " + itos(20 + blev) + " 255\n"
-         // "  6 cm " + itos(20 + blev) + " 255\n"
           "  4 cm " + itos(20 + blev) + " 255\n"
           "  5 cm " + itos(20 + blev) + " 255\n"
           "  6 icm " + itos(16 + blev) + "\n"
-         // "  10 cm " + itos(20 + blev) + " 255\n"
           "  7 icm " + itos(16 + blev) + "\n"
-         // "  12 cm " + itos(20 + blev) + " 255\n"
           "  8 icm " + itos(16 + blev) + "\n"
-         // "  14 cm " + itos(20 + blev) + " 255\n"
-         // "  15 icm " + itos(16 + blev) + "\n"
-         // "  16 cm " + itos(20 + blev) + " 255\n"
           "  9 cm " + itos(20 + blev) + " 255\n"
-         // "  18 cm " + itos(20 + blev) + " 255\n"
           "  10 cm " + itos(20 + blev) + " 255\n"
-         // "  20 cm " + itos(20 + blev) + " 255\n"
-         // "  21 icm " + itos(16 + blev) + "\n"
-         // "  22 icm " + itos(16 + blev) + "\n"
           "  11 cm 11 255\n"
           
           "  12 mix 16  0 " + itos(bmcm + 1) + " 16 255\n"
@@ -6996,9 +6984,8 @@ std::string makeConfig(const char* method, int args[]) {
           
           "  b=c a=*b r=a 9 (r9=buf(1))\n"
           "  b=c b-- a=*b r=a 10 (r10=buf(2))\n"
-        // "  a=c a-= 3 b=a a=*b r=a 11 (r11=buf(4))\n"
           "  a=c a-= 5 b=a a=*b r=a 12 (r12=buf(6))\n"
-        // "  a=c a++ b=r 0 a-=b a-=b b=a a=*b r=a 13 (r13=buf(w*2))\n"
+
           "  a=c a+= 7 b=r 0 a-=b a-=b b=a a=*b r=a 14 (r14=buf(w*2-6))\n"
           "  a=c a+= 4 b=r 0 a-=b a-=b b=a a=*b r=a 15 (r15=buf(w*2-3))\n"
           "  a=c a-= 5 b=r 0 a-=b a-=b b=a a=*b r=a 16 (r16=buf(w*2+6))\n"
@@ -7010,27 +6997,16 @@ std::string makeConfig(const char* method, int args[]) {
           "  d=0 a=r 2 b=r 3 a+=b a>>= 3 hashd a=r 9 a>>= 4 hashd a=r 10 a>>= 4 hashd ( =(buf(3)+buf(w))>>3, buf(1)>>4, buf(2)>>4 ) \n"
           "  d++\n"
           "  a=r 3 b=r 4 a-=b b=r 2 a+=b hashd d++\n"
-        // "  a=r 2 b=r 3 a-=b b=r 5 a+=b hashd d++\n"
           "  a=r 2 a*= 2 b=r 12 a-=b hashd d++\n"
-        // "  a=r 3 a*= 2 b=r 13 a-=b hashd d++\n"
           "  a=r 4 a*= 2 b=r 16 a-=b hashd d++\n"
-        // "  a=r 5 a*= 2 b=r 14 a-=b hashd d++\n"
           "  a=r 9 b=r 18 a-=b b=r 5 a+=b hashd d++\n"
           "  a=r 3 b=r 15 a-=b b=r 5 a+=b hashd d++\n"
           "  a= 24 a*= 16 b=a a=r 8 a<<= 1 a&=b b=a a=r 6 a>>= 1 a|=b hashd d++\n"
           
-        // "  b=r 11 a=r 9 a-=b b=r 2 a+=b hashd d++\n"
           "  b=r 17 a=r 9 a-=b b=r 3 a+=b hashd d++\n"
-        // "  a=r 2 hashd b=r 11 a=r 9 a-=b hashd d++\n"
           "  a=r 9 hashd a=r 10 hashd d++\n"
-        // "  a=r 3 hashd b=r 17 a=r 9 a-=b hashd d++\n"
-        // "  b=r 2 a=r 3 a+=b a>>= 3 hashd a=r 9 a>>= 4 hashd a=r 10 a>>= 4 hashd d++\n"
-        // "  a=r 6 hashd a=r 8 a>>= 4 hashd d++\n"
           "  a=r 2 hashd a=r 9 hashd a=r 10 hashd d++\n"
-        // "  a=r 3 hashd d++\n"
           "  a=r 3 hashd a=r 9 hashd a=r 10 hashd d++\n"
-        //  "  a=r 2 hashd d++\n"
-        //  "  a=r 2 hashd a=r 9 hashd d++\n"
           "  a=r 3 hashd a=r 9 hashd d++\n"
           "  d++\n"
          

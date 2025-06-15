@@ -1,6 +1,6 @@
 // zpaq.cpp - Journaling incremental deduplicating archiver
 
-#define ZPAQ_VERSION "7.15.1f"
+#define ZPAQ_VERSION "7.15.2f"
 /*
   This software is provided as-is, with no warranty.
   I, Matt Mahoney, release this software into
@@ -118,6 +118,27 @@ using std::map;
 using std::min;
 using std::max;
 using libzpaq::StringBuffer;
+
+#pragma pack(push)
+#pragma pack(1)
+struct zpBMFILEHEADER {
+    uint16_t bfType;
+    uint32_t bfSize;
+    uint32_t bfReserved;
+    uint32_t bfOffBits;
+    uint32_t biSize;
+    int32_t biWidth;
+    int32_t biHeight;
+    uint16_t biPlanes;
+    uint16_t biBitCount;
+    uint32_t biCompression;
+    uint32_t biSizeImage;
+    int32_t biXPelsPerMeter;
+    int32_t biYPelsPerMeter;
+    uint32_t biClrUsed;
+    uint32_t biClrImportant;
+};
+#pragma pack(pop)
 
 // Handle errors in libzpaq and elsewhere
 void libzpaq::error(const char* msg) {
@@ -2408,33 +2429,86 @@ int Jidac::add() {
         assert(in!=FPNULL);
         while (true) {
           if (bufptr>=buflen) bufptr=0, buflen=fread(buf, 1, BUFSIZE, in);
-          // detect BMP 1,4,8,24 bit at level 4 and up
+          // detect BMP 1,4,8,24 bit at level 3 and up
           if (level>2 && ext==".bmp" && bufptr==0 && buflen==BUFSIZE && pfState==0) {
-              tagBITMAPFILEHEADER &bmHdr = (tagBITMAPFILEHEADER&)buf;
-              if (bmHdr.bfType=='MB' && uint32_t(bmHdr.bfSize)==infSize && blocksize>uint32_t(bmHdr.bfSize) && bmHdr.bfSize>256 &&
-                  (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078 || bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved1==0 && bmHdr.bfReserved2==0) {
-                  tagBITMAPINFOHEADER& bmInfo = (tagBITMAPINFOHEADER&)buf[sizeof(tagBITMAPFILEHEADER)];
-                  if (bmInfo.biWidth<0xffff && bmInfo.biWidth>16 && bmInfo.biCompression==0 && bmInfo.biPlanes==1) {
-                      if (bmInfo.biBitCount==24 && bmHdr.bfOffBits==54) {
+              zpBMFILEHEADER &bmHdr=(zpBMFILEHEADER&)buf;
+              if (bmHdr.bfType==0x4d42 && bmHdr.bfSize==infSize && blocksize>bmHdr.bfSize && bmHdr.bfSize>256 &&
+                  (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078 || bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved==0) {
+                  if (bmHdr.biWidth<0xffff && bmHdr.biWidth>16 && bmHdr.biCompression==0 && bmHdr.biPlanes==1) {
+                      if (bmHdr.biBitCount==24 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER)) {
                           pfState=1;
                           pfData=bmHdr.bfSize;
-                          imbWidth=((bmInfo.biWidth*3)+3)&-4;
-                      } else if (bmInfo.biBitCount==8 && bmHdr.bfOffBits==1078) {
+                          imbWidth=((bmHdr.biWidth*3)+3)&-4;
+                      } else if (bmHdr.biBitCount==8 && bmHdr.bfOffBits==1078) {
                           pfState=2;
                           pfData=bmHdr.bfSize;
-                          imbWidth=(bmInfo.biWidth+3)&-4;
-                      } else if (bmInfo.biBitCount==1 && bmHdr.bfOffBits==62) {
+                          imbWidth=(bmHdr.biWidth+3)&-4;
+                      } else if (bmHdr.biBitCount==1 && bmHdr.bfOffBits==62) {
                           pfState=3;
                           pfData=bmHdr.bfSize;
-                          imbWidth=(((bmInfo.biWidth-1)>>5)+1)*4;
-                      } else if (bmInfo.biBitCount==4 && bmHdr.bfOffBits==118) {
+                          imbWidth=(((bmHdr.biWidth-1)>>5)+1)*4;
+                      } else if (bmHdr.biBitCount==4 && bmHdr.bfOffBits==118) {
                           pfState=4;
                           pfData=bmHdr.bfSize;
-                          imbWidth=((bmInfo.biWidth*4+31)>>5)*4;
+                          imbWidth=((bmHdr.biWidth*4+31)>>5)*4;
                       }
                   }
               }
           }
+          // multiline pgm pbm ppm
+          if (level>2 && (ext==".pgm" || ext==".pbm" || ext==".ppm") && bufptr==0 && buflen==BUFSIZE && pfState==0) {
+              std::string hdr=std::string(&buf[0], 3);
+              if (hdr=="P5\n") pfState=2;
+              else if (hdr=="P6\n") pfState=1;
+              else if (hdr=="P4\n") pfState=3;
+
+              int wi=0,hi=0,li=0;
+              int i=3;
+              // width height
+              while (wi==0 || hi==0) {
+                  // comment?
+                  if (buf[i]=='#') {
+                     while (buf[i]!='\n' && i<(70+3)) {
+                         ++i;
+                     }
+                     ++i;
+                  }
+                  // width
+                  while (buf[i]>='0' && buf[i]<='9') {
+                     wi=wi* 10+buf[i]- '0';
+                     ++i;
+                     if (i>(3+70+5)) break;
+                  }
+                 // height
+                  if (buf[i]==' ') {
+                      ++i;
+                     while (buf[i]>='0' && buf[i]<='9') {
+                       hi=hi*10+buf[i]-'0';
+                       ++i;
+                        if (i>(3+70+5+5)) break;
+                    }
+                  }
+                  // max val
+                  if (buf[i]=='\n' && pfState!=3){
+                      ++i;
+                     while (buf[i]>='0' && buf[i]<='9') {
+                       li=li*10+buf[i]-'0';
+                       ++i;
+                        if (i>(3+70+5+5+4)) break;
+                    }
+                  }
+                  if (i>(3+70+5+5+4+70)) {
+                      pfState=0;
+                      break;
+                  }
+              }
+              
+              if (wi && hi && li>=0 && li<=255 && pfState==2) imbWidth=wi,pfData=wi*hi+i+1;
+              else if (wi && hi && li==0 && pfState==3) imbWidth=(wi+7)/8,pfData=imbWidth*hi+i+1;
+              else if (wi && hi && li==255 && pfState==1) pfState=2,imbWidth=wi*3,pfData=wi*3*hi+i+1; // use 8 bit model 
+              else pfState=0;
+          }
+          
           // process fragment
           if (bufptr>=buflen) c=EOF;
           else c=(unsigned char)buf[bufptr++];
