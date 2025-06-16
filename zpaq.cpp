@@ -2510,7 +2510,7 @@ int Jidac::add() {
               
               if (wi && hi && li>=0 && li<=255 && pfState==2) imbWidth=wi,pfData=wi*hi+i+1;
               else if (wi && hi && li==0 && pfState==3) imbWidth=(wi+7)/8,pfData=imbWidth*hi+i+1;
-              else if (wi && hi && li==255 && pfState==1) pfState=2,imbWidth=wi*3,pfData=wi*3*hi+i+1; // use 8 bit model 
+              else if (wi && hi && li==255 && pfState==1) pfState=5,imbWidth=wi*3,pfData=wi*3*hi+i+1;
               else pfState=0;
           }
           

@@ -6917,8 +6917,9 @@ std::string makeConfig(const char* method, int args[]) {
   const int level=args[1]&3;
   const bool doe8=args[1]>=4 && args[1]<=7;
   const bool dobmp = args[1] == 8;
+  const bool doppm = args[1] == 9;
 
-  if (dobmp) {
+  if (dobmp || doppm) {
     // 24 bit image model
     int blev = std::min(4,args[0])+1;
     const int bmcm = 11;
@@ -6960,19 +6961,65 @@ std::string makeConfig(const char* method, int args[]) {
           "      a=c a+=b c=a\n"
           "      a=d a+= 255 d=a a=c a>>= 24 *d=a a=d a-= 255 d=a\n"
           "      d++\n"
-          "    a=r 0 b=a a=d a<b while\n"
-          "   c=0 a= 255 r=a 0\n"
-          "  endif\n"
-          "  a=c a== 3 if\n"
+          "    a=r 0 b=a a=d a<b while\n";
+if (dobmp) {          
+ hdr=hdr+ "   c=0 a= 255 r=a 0\n"
+          "  endif\n";
+} else {
+ hdr=hdr+ "   c=0 a= 255 r=a 0 a= 2 r=a 20\n"
+          "  endif\n";
+ }         
+ 
+ if (dobmp) {
+ hdr=hdr+"  a=c a== 3 if\n"
           "    b=0 a=*b\n"
           "    a== 0 ifnot b++ b++ a=*b a>>= 8 b-- a+=*b a++ a++ endif\n"
           "    a+= 20\n"
           "    r=a 19\n"
           "  endif\n"
           
-          "  a=r 19 a==c if b=c a=*b a<<= 8 b-- a+=*b a*= 3 a+= 3 a|= 3 a^= 3 r=a 0 endif (r0=w)\n"
-          
-          "  a=c a%= 3 r=a 1 (r1=color)\n"
+          "  a=r 19 a==c if b=c a=*b a<<= 8 b-- a+=*b a*= 3 a+= 3 a|= 3 a^= 3 r=a 0 endif (r0=w)\n";
+ } else {
+ hdr=hdr+"a=r 19 a== 0 if\n"
+          "a=c a== 4 if\n"
+          "    a= 3 r=a 20 (header)\n"
+          "endif\n"
+          "a=*c a== 35 if (#)\n"
+          "    a= 2 r=a 20 (read comment)\n"
+          "endif\n"
+          "a=r 20 a== 6 if\n"
+          "    a=r 21 a*= 3  r=a 0 (header done, set width)\n"
+          "    r=a 19              (end)\n"
+          "else\n"
+          "    a> 2 if  (not comment)\n"
+          "        a== 3 if (width)\n"
+          "            a=*c a== 32 if\n"
+          "                a= 4 r=a 20\n"
+          "            else\n"
+          "                a=r 21 a*= 10 b=a a=*c a-= 48 a+=b r=a 21 (r21=r21*10+c-'0')\n"
+          "            endif\n"
+          "        else\n"
+          "            a== 4 if (height)\n"
+          "                a=*c a== 10 if (line ended)\n"
+          "                    a= 5 r=a 20\n"
+          "                endif\n"
+          "            else\n"
+          "                a== 5 if    (limit)\n"
+          "                    a=*c a== 10 if (line ended)\n"
+          "                        a= 6 r=a 20\n"
+          "                    endif\n"
+          "                endif\n"
+          "            endif\n"
+          "        endif\n"
+          "    else\n"
+          "        a=*c a== 10 if\n"
+          "            a= 3 r=a 20 (line ended, read val)\n"
+          "        endif\n"
+          "    endif\n"
+          "endif\n"
+        "endif\n";
+ }         
+ hdr=hdr+ "  a=c a%= 3 r=a 1 (r1=color)\n"
           "  b=c b-- b-- a=*b r=a 2 (r2=buf(3))\n"
           "  a=c a++ b=r 0 a-=b b=a a=*b r=a 3 (r3=buf(w))\n"
           "  a=c a-- a-- b=r 0 a-=b b=a a=*b r=a 4 (r4=buf(w+3))\n"
@@ -7758,7 +7805,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // LZ77 with CM depending on redundancy
     else if (level==3) {
-      if (special==1 || special==2) // bmp 24, 8 bit
+      if (special==1 || special==2 || special==5) // bmp 24, 8 bit, ppm
         method+=",c0.0.255."+itos(info-2+1000)+".255";
       else if (special==3) // 1 bit
         method+=",c0.0.7."+itos(info-2+1000)+".255";
@@ -7778,11 +7825,13 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
     else if (level==4) {
       if (special==1)        // bmp
           method+=",8";      // 24 bit
+      else if (special==5)   // ppm
+          method+=",9";      // 24 bit
       else if (special==3)   // 1 bit
           method+=",c0.0.7."+itos(info-2+1000)+".255i2";
       else if (special==4)   // 4 bit
           method+=",c0.0.15." + itos(info-2+1000)+".255i2";
-      else if (special==2)   // 8 bit
+      else if (special==2 ||special==5)   // 8 bit
           method+=",c0.0.255."+itos(info-2+1000)+".255i2";
       else if (type<12)
         method+=",0";
@@ -7808,6 +7857,8 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
     else {  // 5..9
       if (special==1)      //bmp
           method+=",8";    // 24 bit
+      else if (special==5) // ppm
+          method+=",9";    // 24 bit
       else if (special==3) // 1 bit
           method+=",c0.0.7." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2m10,4,0";
       else if (special==4) // 4 bit
