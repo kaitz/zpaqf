@@ -2464,40 +2464,45 @@ int Jidac::add() {
 
               int wi=0,hi=0,li=0;
               int i=3;
+              int comment=0;
               // width height
-              while (wi==0 || hi==0) {
+              while ((wi==0 || hi==0) && pfState) {
                   // comment?
                   if (buf[i]=='#') {
-                     while (buf[i]!='\n' && i<(70+3)) {
-                         ++i;
+                     while (buf[i]!='\n' && i<(255+3)) {
+                        ++i; ++comment;
                      }
-                     ++i;
+                     if (buf[i]!='\n') { // fail on long comment
+                         break;
+                     }
+                     ++i; ++comment;
                   }
                   // width
                   while (buf[i]>='0' && buf[i]<='9') {
                      wi=wi* 10+buf[i]- '0';
                      ++i;
-                     if (i>(3+70+5)) break;
+                     if (i>(3+comment+5)) break;
+                     
                   }
                  // height
                   if (buf[i]==' ') {
-                      ++i;
+                     ++i;
                      while (buf[i]>='0' && buf[i]<='9') {
                        hi=hi*10+buf[i]-'0';
                        ++i;
-                        if (i>(3+70+5+5)) break;
+                        if (i>(3+comment+5+5)) break;
                     }
                   }
                   // max val
                   if (buf[i]=='\n' && pfState!=3){
-                      ++i;
+                     ++i;
                      while (buf[i]>='0' && buf[i]<='9') {
                        li=li*10+buf[i]-'0';
                        ++i;
-                        if (i>(3+70+5+5+4)) break;
+                        if (i>(3+comment+5+5+4)) break;
                     }
                   }
-                  if (i>(3+70+5+5+4+70)) {
+                  if (i>(3+comment+5+5+4)) {
                       pfState=0;
                       break;
                   }
