@@ -1,6 +1,6 @@
 // zpaq.cpp - Journaling incremental deduplicating archiver
 
-#define ZPAQ_VERSION "7.15.2f"
+#define ZPAQ_VERSION "7.15.3f"
 /*
   This software is provided as-is, with no warranty.
   I, Matt Mahoney, release this software into
@@ -137,6 +137,17 @@ struct zpBMFILEHEADER {
     int32_t biYPelsPerMeter;
     uint32_t biClrUsed;
     uint32_t biClrImportant;
+};
+struct zpBMOSFILEHEADER {
+    uint16_t bfType;
+    uint32_t bfSize;
+    uint32_t bfReserved;
+    uint32_t bfOffBits;
+    uint32_t biSize;
+    uint16_t biWidth;
+    uint16_t biHeight;
+    uint16_t biPlanes;
+    uint16_t biBitCount;
 };
 #pragma pack(pop)
 
@@ -2407,7 +2418,10 @@ int Jidac::add() {
       }
       infSize = p->second.size;
       p->second.data=1;  // add
-      ext=p->first.substr(p->first.size() - 4);
+      if (p->first.size()>4 ){
+          ext=p->first.substr(p->first.size() - 4);
+          std::transform(ext.begin(), ext.end(), ext.begin(),[](unsigned char c){ return std::tolower(c); });
+      }
     }
 
     // Read fragments
@@ -2415,6 +2429,8 @@ int Jidac::add() {
     isBMP=pfState;
     info=imbWidth;
     pfState=imbWidth=0;
+    bool isFBMP=ext==".bmp";
+    bool isFBPM=(ext==".pgm" || ext==".pbm" || ext==".ppm");
     for (unsigned fj=0; true; ++fj) {
       int64_t sz=0;  // fragment size;
       unsigned hits=0;  // correct prediction count
@@ -2430,17 +2446,19 @@ int Jidac::add() {
         while (true) {
           if (bufptr>=buflen) bufptr=0, buflen=fread(buf, 1, BUFSIZE, in);
           // detect BMP 1,4,8,24 bit at level 3 and up
-          if (level>2 && ext==".bmp" && bufptr==0 && buflen==BUFSIZE && pfState==0) {
+          if (level>2 && isFBMP==true && bufptr==0 && buflen==BUFSIZE && pfState==0) {
               zpBMFILEHEADER &bmHdr=(zpBMFILEHEADER&)buf;
+             zpBMOSFILEHEADER &bmHdr1=(zpBMOSFILEHEADER&)buf;
+              
               if (bmHdr.bfType==0x4d42 && bmHdr.bfSize==infSize && blocksize>bmHdr.bfSize && bmHdr.bfSize>256 &&
-                  (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078 || bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved==0) {
-                  if (bmHdr.biWidth<0xffff && bmHdr.biWidth>16 && bmHdr.biCompression==0 && bmHdr.biPlanes==1) {
-                      if (bmHdr.biBitCount==24 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER)) {
+                  (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078|| bmHdr.bfOffBits==26|| bmHdr.bfOffBits==794 || bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved==0) {
+                  if (bmHdr.bfOffBits!=26 && bmHdr.biWidth<0xffff && bmHdr.biWidth>16  && bmHdr.biCompression==0 && bmHdr.biPlanes==1) {
+                      if (bmHdr.biBitCount==24 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER) && bmHdr.biWidth>256) {
                           pfState=1;
                           pfData=bmHdr.bfSize;
                           imbWidth=((bmHdr.biWidth*3)+3)&-4;
-                      } else if (bmHdr.biBitCount==8 && bmHdr.bfOffBits==1078) {
-                          pfState=2;
+                      } else if (bmHdr.biBitCount==8 && bmHdr.bfOffBits==1078 ) {
+                          pfState=11;
                           pfData=bmHdr.bfSize;
                           imbWidth=(bmHdr.biWidth+3)&-4;
                       } else if (bmHdr.biBitCount==1 && bmHdr.bfOffBits==62) {
@@ -2451,14 +2469,27 @@ int Jidac::add() {
                           pfState=4;
                           pfData=bmHdr.bfSize;
                           imbWidth=((bmHdr.biWidth*4+31)>>5)*4;
+                      }else if (bmHdr.biBitCount==32 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER)&& bmHdr.biWidth>256) {
+                          pfState=7;
+                          pfData=bmHdr.bfSize;
+                          imbWidth=bmHdr.biWidth*4;
                       }
+                  }else if  (bmHdr.bfOffBits==26 && bmHdr1.biBitCount==24 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>256 &&  bmHdr1.biPlanes==1){
+                      pfState=1;
+                          pfData=bmHdr1.bfSize;
+                          imbWidth=bmHdr1.biWidth*3;
+                  }else if  (bmHdr.bfOffBits==794 && bmHdr1.biBitCount==8 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>256 &&  bmHdr1.biPlanes==1){
+                      pfState=11;
+                          pfData=bmHdr1.bfSize;
+                          imbWidth=bmHdr1.biWidth;
                   }
+                  
               }
           }
           // multiline pgm pbm ppm
-          if (level>2 && (ext==".pgm" || ext==".pbm" || ext==".ppm") && bufptr==0 && buflen==BUFSIZE && pfState==0) {
+          if (level>2 && isFBPM==true && bufptr==0 && buflen==BUFSIZE && pfState==0) {
               std::string hdr=std::string(&buf[0], 3);
-              if (hdr=="P5\n") pfState=2;
+              if (hdr=="P5\n") pfState=12;
               else if (hdr=="P6\n") pfState=1;
               else if (hdr=="P4\n") pfState=3;
 
@@ -2508,7 +2539,7 @@ int Jidac::add() {
                   }
               }
               
-              if (wi && hi && li>=0 && li<=255 && pfState==2) imbWidth=wi,pfData=wi*hi+i+1;
+              if (wi && hi && li>=0 && li<=255 && pfState==12) imbWidth=wi,pfData=wi*hi+i+1;
               else if (wi && hi && li==0 && pfState==3) imbWidth=(wi+7)/8,pfData=imbWidth*hi+i+1;
               else if (wi && hi && li==255 && pfState==1) pfState=5,imbWidth=wi*3,pfData=wi*3*hi+i+1;
               else pfState=0;
@@ -2567,6 +2598,7 @@ int Jidac::add() {
         for (int i=0; i<256; ++i) {
           if (o1ct[o1[i]]<255) h1-=(sz*dt[o1ct[o1[i]]++])>>15;
           if (o1[i]==' ' && (isalnum(i) || i=='.' || i==',')) ++text1;
+          if (o1[i]=='\n' && (isalnum(i) || i==' ' || i=='\n' || i=='/' || i=='#' || i==9 || '}'|| '>')) ++text1; // more tests
           if (o1[i] && (i<9 || i==11 || i==12 || (i>=14 && i<=31) || i>=240))
             --text1;
           if (i>=192 && i<240 && o1[i] && (o1[i]<128 || o1[i]>=192))
@@ -2601,7 +2633,7 @@ int Jidac::add() {
               if (o1prev[i] && o1prev[i]==o1[i&255]) ++ct;
             if (ct>ON*2) newblock=false;
           }
-          if (newsize>=blocksize) newblock=true;  // won't fit?
+          //if (newsize>=blocksize) newblock=true;  // won't fit?
         }
         if (sb.size()+sz+80+frags*4>=blocksize) newblock=true; // full?
         if (fi==vf.size()) newblock=true;  // last file?
@@ -2639,7 +2671,6 @@ int Jidac::add() {
           frags=redundancy=text=exe=0;
           memset(o1prev, 0, sizeof(o1prev));
         }
-
         // Append fragbuf to sb and update block statistics
         assert(sz==0 || fi<vf.size());
         sb.write(&fragbuf[0], sz);
@@ -2669,6 +2700,7 @@ int Jidac::add() {
           break;
       }
     }  // end for each fragment fj
+
     if (fi<vf.size()) {
       dedupesize+=fsize;
       DTMap::iterator p=vf[fi];

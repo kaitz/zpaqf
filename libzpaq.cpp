@@ -6918,24 +6918,305 @@ std::string makeConfig(const char* method, int args[]) {
   const bool doe8=args[1]>=4 && args[1]<=7;
   const bool dobmp = args[1] == 8;
   const bool doppm = args[1] == 9;
+  const bool dotext = args[1] == 10;
+  const bool dobmp8 = args[1] == 11;
+  const bool dopgm = args[1] == 12;
+  if (dobmp8 || dopgm ){
+     hdr="comp 17 17 0 3 19 (hh hm ph pm n)\n"
+          "0 const 160\n"
+          "1 cm 20 255\n"
+          "2 cm 20 255\n"
+          "3 cm 20 255\n"
+          "4 cm 20 255\n"
+          "5 cm 20 255\n"
+          "6 icm 16\n"
+          "7 icm 16\n"
+          "8 icm 16\n"
+          "9 cm 20 255\n"
+          "10 cm 20 255\n"
+          "11 cm 11 255\n"
+          
+          "12 mix 16  0 12 16 255\n"
+          "13 mix 11  0 13 20 255\n"
+          "14 mix2 0 12 13 40 0\n"
+          "15 mix  0  0 14 32 0\n"
+          "16 mix2 0 14 15 40 0\n"
+          "17 sse 16 16  8 255\n"
+          "18 mix2 8 16 17 40 255\n"
+          
+          "hcomp\n"
+          "  *c=a (save in rotating buffer)\n";
+        
+    if (dopgm)
+     hdr+=" a=c a== 0 if\n"
+          "   a= 2 r=a 20\n"
+          "  endif\n";
+    if (dobmp8)
+     hdr+="    a=c a== 3 if\n"
+          "       b=0 a=*b\n"
+          "       a== 0 ifnot b++ b++ a=*b a>>= 8 b-- a+=*b a++ a++ endif\n"
+          "       a+= 20\n"
+          "       r=a 19\n"
+          "     endif\n"
+          "   a=r 19 a==c if b=c a=*b a<<= 8 b-- a+=*b r=a 0 endif (r0=w)\n";
+    else 
+     hdr+="  a=r 19 a== 0 if\n"
+          "    a=c a== 4 if\n"
+          "        a= 3 r=a 20 (header)\n"
+          "    endif\n"
+          "    a=*c a== 35 if (#)\n"
+          "        a= 2 r=a 20 (read comment)\n"
+          "    endif\n"
+          "    a=r 20 a== 6 if\n"
+          "        a=r 21 (a*= 3)  r=a 0 (header done, set width)\n"
+          "        r=a 19              (end)\n"
+          "    else\n"
+          "        a> 2 if  (not comment)\n"
+          "            a== 3 if (width)\n"
+          "                a=*c a== 32 if\n"
+          "                    a= 4 r=a 20\n"
+          "                else\n"
+          "                    a=r 21 a*= 10 b=a a=*c a-= 48 a+=b r=a 21 (r21=r21*10+c-'0')\n"
+          "                endif\n"
+          "            else\n"
+          "                a== 4 if (height)\n"
+          "                    a=*c a== 10 if (line ended)\n"
+          "                        a= 5 r=a 20\n"
+          "                    endif\n"
+          "                else\n"
+          "                    a== 5 if    (limit)\n"
+          "                        a=*c a== 10 if (line ended)\n"
+          "                            a= 6 r=a 20\n"
+          "                        endif\n"
+          "                    endif\n"
+          "                endif\n"
+          "            endif\n"
+          "        else\n"
+          "            a=*c a== 10 if\n"
+          "                a= 3 r=a 20 (line ended, read val)\n"
+          "            endif\n"
+          "        endif\n"
+          "    endif\n"
+          "   endif\n";
+     hdr+="  b=c a=*b r=a 2 (r2=buf(1))\n"
+          "  a=c a++ b=r 0 a-=b b=a a=*b r=a 3 (r3=buf(w))\n"
+          "  a=c b=r 0 a-=b b=a a=*b r=a 4 (r4=buf(w+1))\n"
+          "  a=c a+= 1 b=r 0 a-=b b=a a=*b r=a 5 (r5=buf(w-1))\n"
+          "  a=r 2 b=r 3 a+=b b=r 4 a+=b b=r 5 a+=b r=a 6 (r6=mean)\n"
+          "  a=r 2 a*=a b=a a=r 3 a*=a a+=b b=a a=r 4 a*=a a+=b b=a a=r 5 a*=a a+=b b=a a=r 6 a*=a a/= 4 b<>a a-=b a>>= 2 r=a 7 (r7=var)\n"
+          "  a=r 6 a>>= 2 r=a 6 (r6>>=2)\n"
+          "  a=c a++ b=r 0 a-=b a-=b b=a a=*b r=a 8 (r8=buf(w*2))\n"
+          
+          "  b=c a=*b r=a 9 (r9=buf(1))\n"
+          "  b=c b-- a=*b r=a 10 (r10=buf(2))\n"
+          "  a=c a-= 3 b=a a=*b r=a 12 (r12=buf(4))\n"
+          
+          "  a=c a+= 2 b=r 0 a-=b a-=b b=a a=*b r=a 14 (r14=buf(w*2-2))\n"
+          "  a=c a+= 1 b=r 0 a-=b a-=b b=a a=*b r=a 15 (r15=buf(w*2-1))\n"
+          "  a=c a-= 1 b=r 0 a-=b a-=b b=a a=*b r=a 16 (r16=buf(w*2+2))\n"
+          "  a=c b=r 0 a-=b b=a a=*b r=a 17 (r17=buf(w+1))\n"
+          "  a=c a+= 3 b=r 0 a-=b b=a a=*b r=a 18 (r18=buf(w-2))\n"
+          
+          "  d=0 do *d=0 d++ a=d a< 12 while\n"
+          
+          "  d=0 a=r 2 b=r 3 a+=b a>>= 3 hashd a=r 9 a>>= 4 hashd a=r 10 a>>= 4 hashd ( =(buf(1)+buf(w))>>3, buf(1)>>4, buf(2)>>4 ) \n"
+          "  d++\n"
+          "  a=r 3 b=r 4 a-=b b=r 2 a+=b hashd d++\n"
+          "  a=r 2 a*= 2 b=r 12 a-=b hashd d++\n"
+          "  a=r 4 a*= 2 b=r 16 a-=b hashd d++\n"
+          "  a=r 9 b=r 18 a-=b b=r 5 a+=b hashd a=r 8 hashd d++\n"
+          "  a=r 3 b=r 15 a-=b b=r 5 a+=b hashd a=r 8 hashd d++\n"
+          "  a=r 6 a>>= 1 hashd a=r 8 hashd d++\n"
+          
+          "  b=r 17 a=r 9 a-=b b=r 3 a+=b hashd d++\n"
+          "  a=r 9 hashd a=r 10 hashd d++\n"
+          "  a=r 2 hashd a=r 9 hashd a=r 10 hashd d++\n"
+          "  a=r 3 hashd a=r 9 hashd a=r 10 hashd d++\n"
+          "  a=r 3 hashd a=r 9 hashd d++\n"
+          
+          "  d= 12\n"
+          "  a=r 9 b=r 2 a-=b b=r 3 a+=b a<<= 9 *d=a (mix W-WW+N)\n"
+          "  d++\n"
+          "  a=r 2 a>>= 6 a<<= 9 *d=a (mix, high 2 bits of buf(1))\n"
+          
+          "  d++ d++ d++ d++\n"
+          
+          "  a=r 3 b=r 2 a+=b a<<= 9 *d=a (sse)\n"
+          "  c++\n"
+          "  halt\n"
+          "end\n";
+        return hdr;
+  }
 
+  if (dotext) {
+        // text model
+        const bool dobrackets = args[2] == 1;
+        int blev =(args[0]>=7?2:(args[0]==6?1:0))+1;
+        //if (dobrackets==true) printf("Brackets enabled\n");
+     hdr="comp 10 9 0 0 "+ itos(22+ (dobrackets==true?1:0)) +"\n"
+          "  0 const 158\n"
+          "  1 icm 5\n"
+          "  2 isse 13 1\n"
+          "  3 isse "+itos(15+ blev)+" 2\n"
+          "  4 isse "+itos(17+ blev)+" 3\n"
+          "  5 isse "+itos(19+ blev)+" 4\n"
+          "  6 isse "+itos(19+ blev)+" 5\n"
+          "  7 match "+itos(22+ blev)+" "+itos(23+ blev)+"\n"
+          "  8 isse "+itos(20+ blev)+" 6\n"
+          "  9 icm "+itos(17+ blev)+"\n"
+          "  10 isse "+itos(19+ blev)+" 9\n"
+          "  11 icm "+itos(15+ blev)+"\n"
+          "  12 icm "+itos(15+ blev)+"\n"
+          "  13 icm "+itos(14+ blev)+"\n";
+    if (dobrackets==true)   
+     hdr+="  14 icm "+itos(14+ blev)+"\n"
+          "  15 icm "+itos(15+ blev)+"\n"
+          "  16 icm "+itos(15+ blev)+"\n"
+          "  17 icm "+itos(16+ blev)+"\n"
+          "  18 mix 17 0 18 24 255\n"
+          "  19 mix 15 0 19 10 255\n"
+          "  20 mix2 0 18 19 24 0\n"
+          "  21 sse 18 20 32 255\n"
+          "  22 mix2 0 20 21 16 0\n";
+    else
+     hdr+="  14 icm "+itos(15+ blev)+"\n"
+          "  15 icm "+itos(15+ blev)+"\n"
+          "  16 icm "+itos(16+ blev)+"\n"
+          "  17 mix 17 0 17 24 255\n"
+          "  18 mix 15 0 18 10 255\n"
+          "  19 mix2 0 17 18 24 0\n"
+          "  20 sse 18 19 32 255\n"
+          "  21 mix2 0 19 20 16 0\n";
+    
+     hdr+="hcomp\n"
+          "  b=a a=c a== 0 ifl\n"
+          "    (fill 2 bit char map[256])\n"
+          "    d= 255 d++\n"
+          "    a=0 do *d= 3 d++ a++ a< 48 while\n"
+          "    a=0 do *d= 2 d++ a++ a< 48 while\n"
+          "    a=0 do *d= 1 d++ a++ a< 112 while\n"
+          "    a= 255 a+= 49 d=a \n"
+          "    a= 49 do *d= 1 d++ a++ a< 59 while\n"
+          "    b= 255 b++\n"
+          "    a= 0 a+=b d=a *d= 2 a= 2 a+=b d=a *d= 1 a= 5 a+=b d=a *d= 0 a= 6 a+=b d=a *d= 1\n"
+          "    a= 7 a+=b d=a *d= 2 a= 10 a+=b d=a *d= 0 a= 11 a+=b d=a *d= 0 a= 12 a+=b d=a *d= 1\n"
+          "    b= 0\n"
+          "    a= 0 a+= 255 a++ a+= 255 a++ r=a 10 (r10=ind[0])\n"
+          "  endif\n"
+          "  a=b\n"
+          "  c++ *c=a a= 1\n"
+          "  a+= 255\n"
+          "  b=a a=*c a+=b a++ d=a b=*d\n"
+          "  a=r 1 a<<= 2 a+=b r=a 1      (b2stream=r1=(r1<<2)+map[byte] stream of 2 bit chars)\n"
+          "  a=r 2 a<<= 1 r=a 2           (words<<1)\n"
+          "  b=c a=0\n"
+          "  b-- a=*b b++ a== 10 if a=*b r=a 8  endif a=0 (r2=firstchar)\n"
+          "  b=c b-- a=*b r=a 11(byte2)  a=*c r=a 12(byte)                      (indirect byte)\n"
+          "  a=r 10 b=a a=r 11 a+=b (offs) d=a a=*d a<<= 8 b=a a=r 12 a|=b *d=a (ind[byte2]=(ind[byte2]<<8)|byte) \n"
+          "  a=r 10 b=a a=r 12 a+=b (offs) d=a a=*d r=a 13                      (r13=ind[byte])\n"
+          "  b=c a=0\n"
+          "  d= 2 hash *d=a b--             (1)\n"
+          "  d++ hash *d=a b--              (2)\n"
+          "  d++ hash *d=a b--              (3)\n"
+          "  d++ hash *d=a b--              (4)\n"
+          "  d++ hash b--                   (5)\n"
+          "      hash *d=a b--              (6)\n"
+          "  d++ hash b--                   (7)\n"
+          "      hash b-- *d=a              (8 match)\n"
+          "  d++ hash b--                   (9)\n"
+          "      hash *d=a                  (10)\n"
+          "  (d= 7 a=*d a*= 3 a+=*c a++ *d=a\n"
+          "  d= 8)\n"
+          "  d++ a=*c a&~ 32                (lowercase words or dictionary encoded)\n"
+          "  a> 64 if\n"
+          "    a< 91 if (if a-z)\n"
+          "      d++ hashd d--              (word1)\n"
+          "      *d<>a a+=*d a*= 191 *d=a r=a 6  (r6=word0)\n"
+          "      a=r 2 a++ r=a 2            (words++)\n"
+          "    else \n"
+          "      a=*c a> 127 if (if a-z)\n"
+          "        d++ hashd d--            (word 1)\n"
+          "        *d<>a a+=*d a*= 191 *d=a r=a 6 (r6=word0)\n"
+          "        a=r 2  a++ r=a 2         (words++)\n"
+          "      else \n"
+          "        a=*d a== 0 ifnot         (word1=word0)\n"
+          "          d++ b=*d *d=a a=b (r=a 5) d--\n"
+          "        endif\n"
+          "        *d=0\n"
+          "      endif\n"
+          "    endif\n"
+          "  else \n"
+          "    a=*d a== 0 ifnot\n"
+          "      d++ b=*d *d=a r=a 7 a=b r=a 5 d-- (r5=word2 r7=word1)\n"
+          "    endif\n"
+          "    *d=0\n"
+          "    b=c b-- a=*b a== 58 if\n"
+          "    a=r 4 a< 64 if a=r 3 a== 0 if\n"
+          "    a=*c a== 32 if             (:)\n"
+          "    a=r 2 a&= 4 a== 4 if\n"
+          "        a=r 7 r=a 14             (r14=cword)\n"
+          "      endif endif endif endif endif\n"
+          "    a=*c a== 46 if             (.)\n"
+          "       d++ a=*d a*= 53 *d=a d-- a=r 2 a<<= 1 r=a 2 a=r 1 a|= 254 r=a 1      ( shift word, words, b2stream )\n"
+          "       a=0 r=a 14\n"
+          "    endif\n"
+          "    a=*c a== 44 if             (,)\n"
+          "       a=0 a-- r=a 2 ( words=ffffffff)  a=r 1 a|= 240 r=a 1 (b2stream)\n"
+          "    endif\n"
+          "  endif\n"
+          "  d++\n"
+          "  d++ *d=0 a=0 a-= 4 b=a a=r 1 a&=b a<<= 6 b=*c a+=b \n"
+          "      hashd a=r 2 a&= 15 hashd  a=r 8 hashd                                 ( hash(((b2stream&FFFFFFFC)<<6)+byte,words&15,firstchar) )\n"
+          "  d++ *d=0 a=r 1 a&= 240 a<<= 4 b=*c a+=b hashd \n"
+          "      a= 1 a<<= 16 a-- b=a a=r 13 a>>= 8 a&=b hashd a=r 2 hashd             ( hash(((b2stream&240)<<6)+byte,(ind[byte]>>8)&0xffff,words) )\n"
+          "  d++ *d=0 a=r 1 a&= 255 a<<= 8 b=*c a+=b *d=a hashd\n"
+          "      a=r 14 a== 0 if a=r 5 hashd else hashd endif                          ( hash(((b2stream&255)<<8)+byte,colonword?cword:word2) )\n";
+    if (dobrackets==true)
+     hdr+="  d++ a=*c a== 91 if a=r 3 a< 5 if a++ r=a 3 endif endif (brackets {[]})\n"
+          "      a== 123 if a=r 3 a< 5 if a++ r=a 3 endif endif\n"
+          "      a== 93 if a=r 3 a> 0 if a-- r=a 3 endif endif\n"
+          "      a== 125 if a=r 3 a> 0 if a-- r=a 3 endif endif\n"
+          "      (a== 60 if a=r 3 a< 5 if a++ r=a 3 endif endif\n"
+          "      a== 62 if a=r 3 a> 0 if a-- r=a 3 endif endif)\n"
+          "      b=c a=r 3 hash *d=a b-- a=*b hashd a=r 1 a>>= 2 a&= 255 hashd\n"
+          "      a=r 8 hashd                                                           ( hash(bracketcount,byte,(b2stream>>2)&255),firstchar )\n";
+    
+     hdr+="  d++ a=r 2 a<<= 2 b=r 1 b<>a a&= 3 a+=b a*= 191 b=*c a+=b *d=a a=r 6 hashd ( hash(((words<<2)+(b2stream&3))*191+byte,word0) )\n"
+          "  d++ a=*c a== 10 if (column)\n"
+          "      a=0 r=a 4 (r=a 14) b=c b-- a=*b a== 10 if a=0 r=a 5 r=a 3 endif\n"
+          "    else\n"
+          "      a=r 4 a< 64 if a++ endif r=a 4\n"
+          "    endif\n"
+          "    b=c b<>a a-=b b<>a b++ a=r 1 hash *d=a a=r 8 hashd a=r 7 hashd          ( hash(buf(column+1),b2stream,firstchar, word1) )\n"
+          "  d++ *d=0 a= 1 a<<= 16 a-- b=a a=r 13 a&=b hashd a=*c hashd\n"
+          "      a=r 1 a&= 63 hashd                                                    ( hash(ind[byte]&0xffff,byte,b2stream&63) )\n"
+          "  d++ a=r 1 a<<= 9 *d=a                                                     ( mix=b2stream )\n"
+          "  d++ a=r 1 a&= 63 a<<= 1 b=r 2 b<>a a&= 1 a+=b b=a a=*c a*=b *d=a          ( mix=(((b2stream&63)<<1)+(words&1))*byte )\n"
+          "  d++\n"
+          "  d++ a=*c a<<= 14 b=c b-- b-- hash *d=a a=r 1 a<<= 4 b=r 2 b<>a\n"
+          "      a&= 15 a+=b hashd a=r 6 hashd                                         ( sse=hash((b2stream<<4)+(words&15),word0) )\n"
+          "  halt\n"
+          "end\n";
+          return hdr;
+  }
+  
   if (dobmp || doppm) {
     // 24 bit image model
     int blev = std::min(4,args[0])+1;
     const int bmcm = 11;
-    hdr = "comp 17 17 0 3 21 (hh hm ph pm n)\n"
+    hdr = "comp 17 17 0 3 19 (hh hm ph pm n)\n"
           "  0 const 160\n"
-          "  1 cm "+itos(20+ blev)+" 255\n"
-          "  2 cm " + itos(20 + blev) + " 255\n"
-          "  3 cm " + itos(20 + blev) + " 255\n"
-          "  4 cm " + itos(20 + blev) + " 255\n"
-          "  5 cm " + itos(20 + blev) + " 255\n"
+          "  1 cm "+itos(16+ blev)+" 255\n"
+          "  2 cm " + itos(16 + blev) + " 255\n"
+          "  3 cm " + itos(16 + blev) + " 255\n"
+          "  4 cm " + itos(16 + blev) + " 255\n"
+          "  5 cm " + itos(16 + blev) + " 255\n"
           "  6 icm " + itos(16 + blev) + "\n"
           "  7 icm " + itos(16 + blev) + "\n"
           "  8 icm " + itos(16 + blev) + "\n"
           "  9 cm " + itos(20 + blev) + " 255\n"
           "  10 cm " + itos(20 + blev) + " 255\n"
-          "  11 cm 11 255\n"
+          "  11 cm 16 255\n"
           
           "  12 mix 16  0 " + itos(bmcm + 1) + " 16 255\n"
           "  13 mix 11  0 " + itos(bmcm + 2) + " 20 255\n"
@@ -6944,8 +7225,6 @@ std::string makeConfig(const char* method, int args[]) {
           "  16 mix2 0 " + itos(bmcm + 3) + " " + itos(bmcm + 4) + " 40 0\n"
           "  17 sse 16 " + itos(bmcm + 5) + "  8 255\n"
           "  18 mix2 8 " + itos(bmcm + 5) + " " + itos(bmcm + 6) + " 40 255\n"
-          "  19 sse  8 " + itos(bmcm + 7) + "  8 255\n"
-          "  20 mix2 0 " + itos(bmcm + 7) + " " + itos(bmcm + 8) + " 40 0\n"
           
           "hcomp\n"
           "  *c=a (save in rotating buffer)\n"
@@ -6962,25 +7241,23 @@ std::string makeConfig(const char* method, int args[]) {
           "      a=d a+= 255 d=a a=c a>>= 24 *d=a a=d a-= 255 d=a\n"
           "      d++\n"
           "    a=r 0 b=a a=d a<b while\n";
-if (dobmp) {          
- hdr=hdr+ "   c=0 a= 255 r=a 0\n"
+    if (dobmp)
+     hdr+="   c=0 a= 255 r=a 0\n"
           "  endif\n";
-} else {
- hdr=hdr+ "   c=0 a= 255 r=a 0 a= 2 r=a 20\n"
+    else
+     hdr+="   c=0 a= 255 r=a 0 a= 2 r=a 20\n"
           "  endif\n";
- }         
- 
- if (dobmp) {
- hdr=hdr+"  a=c a== 3 if\n"
+  
+    if (dobmp)
+     hdr+="  a=c a== 3 if\n"
           "    b=0 a=*b\n"
           "    a== 0 ifnot b++ b++ a=*b a>>= 8 b-- a+=*b a++ a++ endif\n"
           "    a+= 20\n"
           "    r=a 19\n"
           "  endif\n"
-          
           "  a=r 19 a==c if b=c a=*b a<<= 8 b-- a+=*b a*= 3 a+= 3 a|= 3 a^= 3 r=a 0 endif (r0=w)\n";
- } else {
- hdr=hdr+"a=r 19 a== 0 if\n"
+    else
+     hdr+="a=r 19 a== 0 if\n"
           "a=c a== 4 if\n"
           "    a= 3 r=a 20 (header)\n"
           "endif\n"
@@ -7018,8 +7295,8 @@ if (dobmp) {
           "    endif\n"
           "endif\n"
         "endif\n";
- }         
- hdr=hdr+ "  a=c a%= 3 r=a 1 (r1=color)\n"
+  
+     hdr+="  a=c a%= 3 r=a 1 (r1=color)\n"
           "  b=c b-- b-- a=*b r=a 2 (r2=buf(3))\n"
           "  a=c a++ b=r 0 a-=b b=a a=*b r=a 3 (r3=buf(w))\n"
           "  a=c a-- a-- b=r 0 a-=b b=a a=*b r=a 4 (r4=buf(w+3))\n"
@@ -7513,7 +7790,7 @@ if (dobmp) {
     "  endif endif\n"
     "  r=a 1  (R1 = 1+expected bytes to next code)\n";
   }
-
+  bool isIndirect=false;
   // Generate the context model
   while (*method && ncomp<254) {
 
@@ -7695,6 +7972,7 @@ if (dobmp) {
       if (v.size()<=4) v.push_back(223);
       if (v.size()<=5) v.push_back(20);
       if (v.size()<=6) v.push_back(0);
+      if (v.size()<=7) v.push_back(0);
       comp+=itos(ncomp)+" icm "+itos(membits-6-v[6])+"\n";
       for (int i=1; i<v[1]; ++i)
         comp+=itos(ncomp+i)+" isse "+itos(membits-6-v[6])+" "
@@ -7709,11 +7987,52 @@ if (dobmp) {
       hcomp+="else\n";
       for (int i=v[1]-1; i>0; --i)
         hcomp+="  d= "+itos(ncomp+i-1)+" a=*d d++ *d=a\n";
-      hcomp+="  d= "+itos(ncomp)+" *d=0\n"
-           "endif\n";
+      hcomp+="  d= "+itos(ncomp)+" *d=0\n";
+      hcomp+=    "endif\n";
       ncomp+=v[1]-1;
       sb=membits-v[6];
       ++ncomp;
+    }
+    // Indirect o1/o2 context with or without n'th byte
+    // n0,0,0,1,0: ICM, ISSE
+    // N1=membits-N1 (0),
+    // N2 indirect maskbits (0=32 reverse),
+    // N3 indirect stream shift bits (0) (32=no indirect stream),
+    // N4 last N4'th byte (1) (0=no bytes)
+    // N5 indirect width in bytes (0=1,1=2 bytes)
+    if (v[0]=='n') {
+         hcomp += "  (indirect and/or byte)\n";
+      if (v.size()<=1) v.push_back(0); // 0 icm, 1 isse
+      if (v.size()<=2) v.push_back(0); // mask bits
+      if (v.size()<=3) v.push_back(0); // shift bits
+      if (v.size()<=4) v.push_back(1); // last N4'th byte
+      if (v.size()<=5) v.push_back(0); // indirect width (0=last byte,1=last two bytes)
+      if (v[1])comp+=itos(ncomp)+" isse "+itos(membits-6)+" "+itos(ncomp-1)+"\n";
+      else comp+=itos(ncomp)+" icm "+itos(membits-6-v[1])+"\n";
+      if (isIndirect==false) {
+        hcomp+="b=c b++ a=*b ";
+        if (v[5])   hcomp+="a<<= 8 b++ a+=*b ";
+        hcomp+= "r=a 11(byte2) b=c a=*b ";
+        if (v[5])   hcomp+="a<<= 8 b++ a+=*b ";
+        hcomp+="r=a 12(byte1)                  (indirect byte)\n";
+        hcomp+="a= 255 a++ b=r 11 a+=b (offs) d=a a=*d a<<= ";
+        if (v[5])   hcomp+="16 b=a a=r 12 ";
+        else hcomp+="8 b=a a=r 12 ";
+        hcomp+=" a|=b *d=a (map[byte2]=(map[byte2]<<8)|byte1)\n"; 
+        hcomp+="a= 255 a++ b=r 12 a+=b (offs) d=a a=*d r=a 13 (r13=map[byte1])\n";
+        isIndirect=true;
+      }
+      hcomp+="  d= "+itos(ncomp);
+      hcomp+=" *d=0 ";
+      if (v[4]) {
+        hcomp+="b=c ";
+        for (int i=0; i<v[4]-1; ++i)
+          hcomp+="b++ ";
+        hcomp+=" a=*b hashd";
+      }
+      hcomp+=" a= 0 a-- a>>= "+itos(32-v[2])+" b=a a=r 13 a>>= "+itos(v[3])+" a&=b hashd\n";
+      ++ncomp;
+      hdr="comp 11 16 0 0 ";
     }
   }
 
@@ -7805,8 +8124,9 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // LZ77 with CM depending on redundancy
     else if (level==3) {
-      if (special==1 || special==2 || special==5) // bmp 24, 8 bit, ppm
-        method+=",c0.0.255."+itos(info-2+1000)+".255";
+      if (special==1 || special==12 || special==11|| special==5) // bmp 24, 8 bit, ppm, pgm
+        method+=",c0.0.255."+itos(info-2+1000)+".255n1,8,0,0,1n1,8,0,3,1";
+      //  special==7 32bit image, no specal model
       else if (special==3) // 1 bit
         method+=",c0.0.7."+itos(info-2+1000)+".255";
       else if (special==4) // 4 bit
@@ -7815,25 +8135,61 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
         method+=",0";
       else if (type<48)  // fast LZ77 if barely compressible
         method+=","+itos(1+doe8)+",4,0,3"+htsz;
-      else if (type>=640 || (type&1))  // BWT if text or highly compressible
-        method+=","+itos(3+doe8)+"ci1";
+      else if (type>=640 || (type&1)){  // BWT if text or highly compressible
+        int lowP=0;
+        if ((type&1)==0) {
+          // Analyze the data
+          const int NR=1<<12;
+          int pt[256]={0};  // position of last occurrence
+          int r[NR]={0};    // count repetition gaps of length r
+          const unsigned char* p=in->data();
+          if (level>0) {
+            for (unsigned i=0; i<n; ++i) {
+              const int k=i-pt[p[i]];
+              if (k>0 && k<NR) ++r[k];
+              pt[p[i]]=i;
+            }
+          }
+          // Add low period if any
+          int n1=n-r[1]-r[2]-r[3];
+          for (int i=0; i<2; ++i) {
+            int period=0;
+            double score=0;
+            int t=0;
+            for (int j=5; j<NR && t<n1; ++j) {
+              const double s=r[j]/(256.0+n1-t);
+              if (s>score) score=s, period=j;
+              t+=r[j];
+            }
+            if (period>4 && score>0.1) {
+              if (period<=10)
+                lowP=period-1;
+              n1-=r[period];
+              r[period]=0;
+            }
+            else
+              break;
+          }
+        }
+        method+=","+itos(3+doe8)+"ci"+itos(1+(lowP/2))+"s8,32,85";
+      }
       else  // LZ77 with O0-1 compression of up to 12 literals
-        method+=","+itos(2+doe8)+",12,0,7"+sasz+",1c0,0,511i2";
+        method+=","+itos(2+doe8)+",12,0,7"+sasz+",1c0,0,511i2s8,32,65";
     }
 
     // LZ77+CM, fast CM, or BWT depending on type
     else if (level==4) {
-      if (special==1)        // bmp
-          method+=",8";      // 24 bit
-      else if (special==5)   // ppm
-          method+=",9";      // 24 bit
+      if (special==1 ||  special==5)       
+        method+=",c0."+itos(3)+".255i2c0.0.511."+itos(info-2+1000)+".255n1,8,0,0,1n1,8,0,3,1m11,24,3";     // 24 bit ppm bmp
       else if (special==3)   // 1 bit
-          method+=",c0.0.7."+itos(info-2+1000)+".255i2";
+        method+=",c0.0.7."+itos(info-2+1000)+".255i2m1";
+      else if (special==11 || special==12)
+        method+=",c0.0.255."+itos(info-2+1000)+".255i2c0.0.255."+itos(info*2-2+1000)+".255i2m";    // 8 bit bmp pgm  
       else if (special==4)   // 4 bit
-          method+=",c0.0.15." + itos(info-2+1000)+".255i2";
-      else if (special==2 ||special==5)   // 8 bit
-          method+=",c0.0.255."+itos(info-2+1000)+".255i2";
-      else if (type<12)
+        method+=",c0.0.15." + itos(info-2+1000)+".255i2n0,4,0,1,0m16,10";
+      else if (special==7)   // 24/32 bit
+        method+=",c0."+itos(3+special-6)+".255i2,"+itos(2+special-6)+","+itos(2+special-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16";
+      else if (type<20)
         method+=",0";
       else if (type<24)
         method+=","+itos(1+doe8)+",4,0,3"+htsz;
@@ -7842,15 +8198,96 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       else if (type<900) {
         method+=","+itos(doe8);
         if (type&1) { //text
-            if (type>100) method += "ci1,2,1,2aw2,65,26,223,191,0";
-            else method += "ci1,1,1,1,2aw";
+            if (type>100) {
+                // Test if we can use indirect model
+                // most text files will have lg o1/o2 >=8, except book1, dickens.
+                // Some binary files also have lg o1/o2 >=8, compressed files will mostly be below 6.
+                // If we can use then drop one word model and one ISSE order x model
+                // and use indirect o2 ISSE model on top of word0 model
+                unsigned int t[256]={0};
+                unsigned int t2[0x10000]={0};
+                int m[256]={0};
+                int m2[0x10000]={0};
+                int c;
+                unsigned char b2=0,b3=0;
+                unsigned int len=0;
+                const unsigned char* p=in->data();
+                for (unsigned i=0; i<n; ++i) {
+                    c=p[i];
+                    t[b2]=(t[b2]<<8)|(unsigned char)c;
+                    unsigned int r=(t[c]>>8)&255;
+            
+                    t2[(b3<<8)+ b2]=(t2[(b3<<8)+b2]<<8)|(unsigned char)c;
+                    unsigned int s=(t2[(b2<<8)+c]>>8)&0xffff;
+            
+                    if (c==r) m[c]++;
+                    if (((b2<<8)+c)==s) m2[(b2<<8)+c]++;
+                    b3=b2;
+                    b2=(unsigned char)c;
+                }
+                int avg=0,count=0;
+                for(auto j=0; j<256; j++) {
+                    if (m[j]>0)avg=avg+m[j],count++;
+                }
+                int lgo1=lg(avg/count);
+                avg=0, count=0;
+                for(auto j=0; j<0x10000; j++) {
+                    if (m2[j]>0)avg=avg+m2[j],count++;
+                }
+                int lgo2=lg(avg/count);
+                if (lgo1>8 && lgo2>=8)
+                    method+="c256.0.255i2,1,3aw1,65,26,223,191,0n1,24,8,1,1";
+                else
+                    method+="c256.0.255i2,1,1,2aw2,65,26,223,191,0";
+            }
+            else method+="ci1,1,1,1,2aw";
+        } else {
+            if (doe8==0) method+="ci1,1,1,3an0,17,2,1,1";
+            else if (doe8==4) method+="ci1,1,1,3an0,18,1,1,1";
+            else method += "ci1,1,1,1,2a";
         }
-        else method += "ci1,1,1,1,2a";
-        if (type&1) method += "m10,24,4,1";
+        if (type&1) method+="m11,10,4,1";
+        else if (doe8==0) method+="m12,24,4"; 
+        else if (doe8==4) method+="m12,30,4";
         else method+="m10,24,3";
       }
-      else
-        method+=","+itos(3+doe8)+"ci1";
+      else { // BWT
+        // Analyze the data
+        const int NR=1<<12;
+        int pt[256]={0};  // position of last occurrence
+        int r[NR]={0};    // count repetition gaps of length r
+        const unsigned char* p=in->data();
+        if (level>0) {
+          for (unsigned i=0; i<n; ++i) {
+            const int k=i-pt[p[i]];
+            if (k>0 && k<NR) ++r[k];
+            pt[p[i]]=i;
+          }
+        }
+        // Add low period if any
+        int lowP=0;
+        int n1=n-r[1]-r[2]-r[3];
+        for (int i=0; i<2; ++i) {
+          int period=0;
+          double score=0;
+          int t=0;
+          for (int j=5; j<NR && t<n1; ++j) {
+            const double s=r[j]/(256.0+n1-t);
+            if (s>score) score=s, period=j;
+            t+=r[j];
+          }
+          if (period>4 && score>0.1) {
+            if (period<=10)
+              lowP=period-1;
+            n1-=r[period];
+            r[period]=0;
+          }
+          else
+            break;
+        }
+        method+=","+itos(3+doe8)+"ci"+itos(1+lowP);
+      }
+       
     }
 
     // Slow CM with lots of models
@@ -7859,59 +8296,97 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
           method+=",8";    // 24 bit
       else if (special==5) // ppm
           method+=",9";    // 24 bit
+      else if (special==11)
+          method+=",11";   // 8 bit bmp 
       else if (special==3) // 1 bit
-          method+=",c0.0.7." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2m10,4,0";
+          method+=",c0.0.7." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2m10,4,0";//?
       else if (special==4) // 4 bit
-          method+=",c0.0.15." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2m10,4,0";
-      else if (special==2) // 8 it
-          method+=",c0.0.255."+itos(info-2+1000)+".255i2c0.0.255."+itos(info*2-2+1000)+".255i2m";
-      else if (type<5) // store if not compressible
+          method+=",c0.0.15." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2m10,4,0";//?
+      else if (special==12)
+          method+=",12";     // 8 bit pgm
+      else if (special==6 || special==7)   // 32 bit
+          method+=",c0."+itos(3+special-6)+".255i2,"+itos(2+special-6)+","+itos(2+special-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16";
+      else if (type<9) // store if not compressible
           method+=",0";
-      else {
-      // Model text files
-      method+=","+itos(doe8);
-      if ((type&1) && type>100) method += "w2,65,26,223,191,0c0,1010,255i1";
-      else if (type&1) method+="w2c0,1010,255i1";
-      else method+="w1i1";
-      if (type&1) method+="c256ci1,1,1,1,1,2,2a";
-      else method+="c256ci1,1,1,1,1,1,2a";
+      else if (type&1) {
+          // Test for brackets
+          int br[256]={0};
+          int bopen=0,bclose=0;
+          br['(']=1; br['[']=1; br['{']=1; br['<']=1;
+          br[')']=2; br[']']=2; br['}']=2; br['>']=2;
+          const unsigned char* p=in->data();
+          for (unsigned i=0; i<n; ++i) {
+             if (br[p[i]]==1) bopen++;
+             else if (br[p[i]]==2) bclose++;
+          }
+          int brackets=( (lg(n)/2)< ((lg(bopen)+lg(bclose))>>1) )?1:0;
+          method+=",10,"+itos(brackets);
+      } else {
+          // Analyze the data
+          const int NR=1<<12;
+          int pt[256]={0};  // position of last occurrence
+          int r[NR]={0};    // count repetition gaps of length r
+          const unsigned char* p=in->data();
+          for (unsigned i=0; i<n; ++i) {
+              const int k=i-pt[p[i]];
+              if (k>0 && k<NR) ++r[k];
+              pt[p[i]]=i;
+          }
+          // Add periodic models
+          bool isPeriod=false;
+          int lowP=0,highP=0;
+          std::string speriod="";
+          int n1=n-r[1]-r[2]-r[3];
+          for (int i=0; i<2; ++i) {
+              int period=0;
+              double score=0;
+              int t=0;
+              for (int j=5; j<NR && t<n1; ++j) {
+                  const double s=r[j]/(256.0+n1-t);
+                  if (s>score) score=s, period=j;
+                  t+=r[j];
+              }
+              if (period>4 && score>0.1) {
+                 isPeriod=true;
+                 if (period>255) highP=period;
+                 speriod+="c0,0,"+itos(999+period)+",255i1";
+                 if (period<=255)
+                    speriod+="c0,"+itos(period)+"i1",lowP=period;
+                 n1-=r[period];
+                 r[period]=0;
+              }
+              else
+                  break;
+          }
+          // Model text files
+          method+=","+itos(doe8);
+          if ((type&1) && type>100) method += "w2,65,26,223,191,0c0,1010,255i1";
+          else if (type&1) method+="w2c0,1010,255i1";
+          else method+="w1i1";
+          if (type&1) method+="c256ci1,1,1,1,1,2,2a";
+          else if (isPeriod==true && lowP>1 && lowP<11) {
+              int p=2,maxP=lowP;
+              method+="c256ci";
+              while (p) {
+                  method+=itos(p)+",";
+                  maxP=maxP-p;
+                  p=p+1;
+                  if (p>maxP) {
+                     method+=itos(lowP);
+                     break;
+                  }
+              }
+              method+="a";
+          } else if (isPeriod==true && lowP>10 && lowP<30) {
+              int p=2,maxP=lowP;
+              method+="c256ci"+itos(lowP/2)+","+itos(lowP);
+              method+="a";
+          } else method+="c256ci1,1,1,1,1,1,2a";
 
-      // Analyze the data
-      const int NR=1<<12;
-      int pt[256]={0};  // position of last occurrence
-      int r[NR]={0};    // count repetition gaps of length r
-      const unsigned char* p=in->data();
-      if (level>0) {
-        for (unsigned i=0; i<n; ++i) {
-          const int k=i-pt[p[i]];
-          if (k>0 && k<NR) ++r[k];
-          pt[p[i]]=i;
-        }
-      }
-
-      // Add periodic models
-      int n1=n-r[1]-r[2]-r[3];
-      for (int i=0; i<2; ++i) {
-        int period=0;
-        double score=0;
-        int t=0;
-        for (int j=5; j<NR && t<n1; ++j) {
-          const double s=r[j]/(256.0+n1-t);
-          if (s>score) score=s, period=j;
-          t+=r[j];
-        }
-        if (period>4 && score>0.1) {
-          method+="c0,0,"+itos(999+period)+",255i1";
-          if (period<=255)
-            method+="c0,"+itos(period)+"i1";
-          n1-=r[period];
-          r[period]=0;
-        }
-        else
-          break;
-      }
-      if ((type&1) && (type>100)) method += "m10,4,1m16ts19t0";
-      else method+="c0,2,0,255i1c0,3,0,0,255i1c0,4,0,0,0,255i1mm16ts19t0";
+          method+=speriod;
+          if ((type&1) && (type>100)) method += "m10,4,1m16ts19t0";
+          else if (isPeriod==true) method += "mm16ts19t0";
+          else method+="c0,2,0,255i1c0,3,0,0,255i1c0,4,0,0,0,255i1mm16ts19t0";
       }
     }
   }
