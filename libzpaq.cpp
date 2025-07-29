@@ -7203,8 +7203,8 @@ std::string makeConfig(const char* method, int args[]) {
   if (dobmp || doppm) {
     // 24 bit image model
     int blev = std::min(4,args[0])+1;
-    const int bmcm = 11;
-    hdr = "comp 17 17 0 3 19 (hh hm ph pm n)\n"
+    const int bmcm = 12;
+    hdr = "comp 17 17 0 3 20 (hh hm ph pm n)\n"
           "  0 const 160\n"
           "  1 cm "+itos(16+ blev)+" 255\n"
           "  2 cm " + itos(16 + blev) + " 255\n"
@@ -7217,15 +7217,15 @@ std::string makeConfig(const char* method, int args[]) {
           "  9 cm " + itos(20 + blev) + " 255\n"
           "  10 cm " + itos(20 + blev) + " 255\n"
           "  11 cm 16 255\n"
-          
-          "  12 mix 16  0 " + itos(bmcm + 1) + " 16 255\n"
-          "  13 mix 11  0 " + itos(bmcm + 2) + " 20 255\n"
-          "  14 mix2 0 " + itos(bmcm + 1) + " " + itos(bmcm + 2) + " 40 0\n"
-          "  15 mix  0  0 " + itos(bmcm + 3) + " 32 0\n"
-          "  16 mix2 0 " + itos(bmcm + 3) + " " + itos(bmcm + 4) + " 40 0\n"
-          "  17 sse 16 " + itos(bmcm + 5) + "  8 255\n"
-          "  18 mix2 8 " + itos(bmcm + 5) + " " + itos(bmcm + 6) + " 40 255\n"
-          
+          "  12 match 21 23\n"
+          "  13 mix 16  0 " + itos(bmcm + 1) + " 16 255\n"
+          "  14 mix 11  0 " + itos(bmcm + 2) + " 20 255\n"
+          "  15 mix2 0 " + itos(bmcm + 1) + " " + itos(bmcm + 2) + " 40 0\n"
+          "  16 mix  0  0 " + itos(bmcm + 3) + " 32 0\n"
+          "  17 mix2 0 " + itos(bmcm + 3) + " " + itos(bmcm + 4) + " 40 0\n"
+          "  18 sse 16 " + itos(bmcm + 5) + "  8 255\n"
+          "  19 mix2 8 " + itos(bmcm + 5) + " " + itos(bmcm + 6) + " 40 255\n"
+
           "hcomp\n"
           "  *c=a (save in rotating buffer)\n"
           "  a=c a== 0 if (compute lookup ilog table)\n"
@@ -7338,7 +7338,7 @@ std::string makeConfig(const char* method, int args[]) {
           "  do\n"
           "    a=r 1 hashd d++\n"
           "  a=d a< 12 while\n"
-          
+          "  d= 12 a=*d a*= 192 a+=*c a++ *d=a d++ (match)\n"
           "  a=r 9 a>>= 4 a*= 3 b=r 1 a+=b a<<= 9 *d=a (mix)\n"
           "  d++\n"
           "  a=r 1 a<<= 9 *d=a (mix)\n"
@@ -7877,13 +7877,14 @@ std::string makeConfig(const char* method, int args[]) {
 
     // m,8,24,0,0: MIX, size, rate, bmask, blow
     // t,8,24: MIX2, size, rate
-    // s,8,32,255: SSE, size, start, limit
+    // s,8,32,255,0: SSE, size, start, limit, skip
     if (strchr("mts", v[0]) && ncomp>int(v[0]=='t')) {
       if (v.size()<=1) v.push_back(8);
       if (v.size()<=2) v.push_back(24+8*(v[0]=='s'));
       if (v[0]=='m' && v.size()<=3) v.push_back(0);
       if (v[0]=='m' && v.size()<=4) v.push_back(0);
       if (v[0]=='s' && v.size()<=3) v.push_back(255);
+      if (v[0]=='s' && v.size()<=4) v.push_back(0);
       comp+=itos(ncomp);
       sb=5+v[1]*3/4;
       if (v[0]=='m')
@@ -7897,8 +7898,9 @@ std::string makeConfig(const char* method, int args[]) {
       if (v[1]>8 && ( v[3] == 0 && (v[0] == 'm' || v[0] == 't') || v[0] == 's')) {
          if (v[0] == 'm') hcomp += "  (mixer context)\n";
          if (v[0] == 't') hcomp += "  (mixer2 context)\n";
-         if (v[0] == 's') hcomp += "  (SSE context)\n";
+         if (v[0] == 's') hcomp += "  (SSE context)\n"; 
         hcomp+="d= "+itos(ncomp)+" *d=0 b=c a=0\n";
+        if (v[0] == 's' && v[4]!=0) hcomp+="a= "+itos(v[4]/256)+" a<<= 8 a+= "+itos(v[4]&255)+" a+=b b=a a=0 "; 
         for (; v[1]>=16; v[1]-=8) {
           hcomp+="a<<= 8 a+=*b";
           if (v[1]>16) hcomp+=" b++";
@@ -8059,7 +8061,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
   // Get type from method "LB,R,t" where L is level 0..5, B is block
   // size 0..11, R is redundancy 0..255, t = 0..3 = binary, text, exe, both.
   unsigned type=0;
-  unsigned special = 0,info=0; //image type, info about image
+  unsigned special = 0,info=0,img=0; //image type, info about image, block is mostly images
   if (isdigit(method[0])) {
     int commas=0, arg[6]={0};
     for (int i=1; i<int(method.size()) && commas<6; ++i) {
@@ -8067,7 +8069,10 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       else if (isdigit(method[i])) arg[commas]=arg[commas]*10+method[i]-'0';
     }
     if (commas==0) type=512;
-    else type=arg[1]*4+arg[2];
+    else {
+        if ((arg[2]&4)==4) img=1,arg[2]=arg[2]&3;
+        type=arg[1]*4+arg[2];
+    }
     special = arg[3]; 
     info = arg[4];
   }
@@ -8124,12 +8129,12 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // LZ77 with CM depending on redundancy
     else if (level==3) {
-      if (special==1 || special==12 || special==11|| special==5) // bmp 24, 8 bit, ppm, pgm
+      if (special==IM8_PGM || special==IM24_PPM || special==IM8_BMP|| special==IM24_BMP) // bmp 24, 8 bit, ppm, pgm
         method+=",c0.0.255."+itos(info-2+1000)+".255n1,8,0,0,1n1,8,0,3,1";
       //  special==7 32bit image, no specal model
-      else if (special==3) // 1 bit
+      else if (special==IM1_PBM ||special==IM1_BMP ) // 1 bit
         method+=",c0.0.7."+itos(info-2+1000)+".255";
-      else if (special==4) // 4 bit
+      else if (special==IM4_BMP) // 4 bit
         method+=",c0.0.15."+itos(info-2+1000)+".255";
       else if (type<20)  // store if not compressible
         method+=",0";
@@ -8179,16 +8184,16 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // LZ77+CM, fast CM, or BWT depending on type
     else if (level==4) {
-      if (special==1 ||  special==5)       
-        method+=",c0."+itos(3)+".255i2c0.0.511."+itos(info-2+1000)+".255n1,8,0,0,1n1,8,0,3,1m11,24,3";     // 24 bit ppm bmp
-      else if (special==3)   // 1 bit
+      if (special==IM24_PPM ||  special==IM24_BMP)
+        method+=",c0."+itos(3)+".255i3c0.0.511."+itos(info-2+1000)+".255n1,8,8,3,1a192m11,24,3s24,16,255,"+itos(info-1);    // 24 bit ppm bmp
+      else if (special==IM1_PBM || special==IM1_BMP)   // 1 bit
         method+=",c0.0.7."+itos(info-2+1000)+".255i2m1";
-      else if (special==11 || special==12)
+      else if (special==IM8_PGM || special==IM8_BMP)
         method+=",c0.0.255."+itos(info-2+1000)+".255i2c0.0.255."+itos(info*2-2+1000)+".255i2m";    // 8 bit bmp pgm  
-      else if (special==4)   // 4 bit
+      else if (special==IM4_BMP)   // 4 bit
         method+=",c0.0.15." + itos(info-2+1000)+".255i2n0,4,0,1,0m16,10";
-      else if (special==7)   // 24/32 bit
-        method+=",c0."+itos(3+special-6)+".255i2,"+itos(2+special-6)+","+itos(2+special-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16";
+      else if (special==IM32_BMP)   // 32 bit
+        method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16";
       else if (type<20)
         method+=",0";
       else if (type<24)
@@ -8292,20 +8297,20 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // Slow CM with lots of models
     else {  // 5..9
-      if (special==1)      //bmp
+      if (special==IM24_BMP) 
           method+=",8";    // 24 bit
-      else if (special==5) // ppm
+      else if (special==IM24_PPM)
           method+=",9";    // 24 bit
-      else if (special==11)
+      else if (special==IM8_BMP)
           method+=",11";   // 8 bit bmp 
-      else if (special==3) // 1 bit
+      else if (special==IM1_PBM || special==IM1_BMP) // 1 bit
           method+=",c0.0.7." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2m10,4,0";//?
-      else if (special==4) // 4 bit
+      else if (special==IM4_BMP) // 4 bit
           method+=",c0.0.15." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2m10,4,0";//?
-      else if (special==12)
+      else if (special==IM8_PGM)
           method+=",12";     // 8 bit pgm
-      else if (special==6 || special==7)   // 32 bit
-          method+=",c0."+itos(3+special-6)+".255i2,"+itos(2+special-6)+","+itos(2+special-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16";
+      else if (special==IM32_BMP)   // 32 bit
+          method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16";
       else if (type<9) // store if not compressible
           method+=",0";
       else if (type&1) {

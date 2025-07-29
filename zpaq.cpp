@@ -1,6 +1,6 @@
 // zpaq.cpp - Journaling incremental deduplicating archiver
 
-#define ZPAQ_VERSION "7.15.3f"
+#define ZPAQ_VERSION "7.15.4f"
 /*
   This software is provided as-is, with no warranty.
   I, Matt Mahoney, release this software into
@@ -2379,8 +2379,8 @@ int Jidac::add() {
   writeJidacHeader(&out, date, -1, htsize);
   const int64_t header_end=out.tell();
   int pfData=0,imbWidth=0;
-  int pfState=0; // 0 start, 1 header
-  int isBMP=0,info=0;
+  SpecialType pfState=IM_NONE,isBMP=IM_NONE;
+  int info=0;
   // Compress until end of last file
   assert(method!="");
   StringBuffer sb(blocksize+4096-128);  // block to compress
@@ -2388,6 +2388,7 @@ int Jidac::add() {
   unsigned redundancy=0;  // estimated bytes that can be compressed out of sb
   unsigned text=0;     // number of fragents containing text
   unsigned exe=0;      // number of fragments containing x86 (exe, dll)
+  unsigned img=0;      // number of fragments containing images (bmp, ppm, pgm, pbm)
   const int ON=4;      // number of order-1 tables to save
   const int level=isdigit(method[0])?(method[0]-'0'):-1;
   unsigned char o1prev[ON*256]={0};  // last ON order 1 predictions
@@ -2428,7 +2429,7 @@ int Jidac::add() {
     int64_t fsize=0;  // file size after dedupe
     isBMP=pfState;
     info=imbWidth;
-    pfState=imbWidth=0;
+    pfState=IM_NONE,imbWidth=0;
     bool isFBMP=ext==".bmp";
     bool isFBPM=(ext==".pgm" || ext==".pbm" || ext==".ppm");
     for (unsigned fj=0; true; ++fj) {
@@ -2446,55 +2447,53 @@ int Jidac::add() {
         while (true) {
           if (bufptr>=buflen) bufptr=0, buflen=fread(buf, 1, BUFSIZE, in);
           // detect BMP 1,4,8,24 bit at level 3 and up
-          if (level>2 && isFBMP==true && bufptr==0 && buflen==BUFSIZE && pfState==0) {
+          if (level>2 && isFBMP==true && bufptr==0 && buflen==BUFSIZE && pfState==IM_NONE) {
               zpBMFILEHEADER &bmHdr=(zpBMFILEHEADER&)buf;
              zpBMOSFILEHEADER &bmHdr1=(zpBMOSFILEHEADER&)buf;
-              
               if (bmHdr.bfType==0x4d42 && bmHdr.bfSize==infSize && blocksize>bmHdr.bfSize && bmHdr.bfSize>256 &&
                   (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078|| bmHdr.bfOffBits==26|| bmHdr.bfOffBits==794 || bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved==0) {
                   if (bmHdr.bfOffBits!=26 && bmHdr.biWidth<0xffff && bmHdr.biWidth>16  && bmHdr.biCompression==0 && bmHdr.biPlanes==1) {
-                      if (bmHdr.biBitCount==24 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER) && bmHdr.biWidth>256) {
-                          pfState=1;
+                      if (bmHdr.biBitCount==24 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER) && bmHdr.biWidth>16) {
+                          pfState=IM24_BMP;
                           pfData=bmHdr.bfSize;
                           imbWidth=((bmHdr.biWidth*3)+3)&-4;
                       } else if (bmHdr.biBitCount==8 && bmHdr.bfOffBits==1078 ) {
-                          pfState=11;
+                          pfState=IM8_BMP;
                           pfData=bmHdr.bfSize;
                           imbWidth=(bmHdr.biWidth+3)&-4;
                       } else if (bmHdr.biBitCount==1 && bmHdr.bfOffBits==62) {
-                          pfState=3;
+                          pfState=IM1_BMP;
                           pfData=bmHdr.bfSize;
                           imbWidth=(((bmHdr.biWidth-1)>>5)+1)*4;
                       } else if (bmHdr.biBitCount==4 && bmHdr.bfOffBits==118) {
-                          pfState=4;
+                          pfState=IM4_BMP;
                           pfData=bmHdr.bfSize;
                           imbWidth=((bmHdr.biWidth*4+31)>>5)*4;
-                      }else if (bmHdr.biBitCount==32 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER)&& bmHdr.biWidth>256) {
-                          pfState=7;
+                      }else if (bmHdr.biBitCount==32 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER)&& bmHdr.biWidth>16) {
+                          pfState=IM32_BMP;
                           pfData=bmHdr.bfSize;
                           imbWidth=bmHdr.biWidth*4;
                       }
-                  }else if  (bmHdr.bfOffBits==26 && bmHdr1.biBitCount==24 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>256 &&  bmHdr1.biPlanes==1){
-                      pfState=1;
+                  // OS/2
+                  }else if  (bmHdr.bfOffBits==26 && bmHdr1.biBitCount==24 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>16 &&  bmHdr1.biPlanes==1){
+                      pfState=IM24_BMP;
                           pfData=bmHdr1.bfSize;
                           imbWidth=bmHdr1.biWidth*3;
-                  }else if  (bmHdr.bfOffBits==794 && bmHdr1.biBitCount==8 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>256 &&  bmHdr1.biPlanes==1){
-                      pfState=11;
+                  }else if  (bmHdr.bfOffBits==794 && bmHdr1.biBitCount==8 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>16 &&  bmHdr1.biPlanes==1){
+                      pfState=IM8_BMP;
                           pfData=bmHdr1.bfSize;
                           imbWidth=bmHdr1.biWidth;
                   }
-                  
               }
           }
           // multiline pgm pbm ppm
-          if (level>2 && isFBPM==true && bufptr==0 && buflen==BUFSIZE && pfState==0) {
+          if (level>2 && isFBPM==true && bufptr==0 && buflen==BUFSIZE && pfState==IM_NONE) {
               std::string hdr=std::string(&buf[0], 3);
-              if (hdr=="P5\n") pfState=12;
-              else if (hdr=="P6\n") pfState=1;
-              else if (hdr=="P4\n") pfState=3;
+              if (hdr=="P5\n") pfState=IM8_PGM;
+              else if (hdr=="P6\n") pfState=IM24_PPM;
+              else if (hdr=="P4\n") pfState=IM1_PBM;
 
-              int wi=0,hi=0,li=0;
-              int i=3;
+              int wi=0,hi=0,li=0,i=3;
               int comment=0;
               // width height
               while ((wi==0 || hi==0) && pfState) {
@@ -2513,7 +2512,6 @@ int Jidac::add() {
                      wi=wi* 10+buf[i]- '0';
                      ++i;
                      if (i>(3+comment+5)) break;
-                     
                   }
                  // height
                   if (buf[i]==' ') {
@@ -2525,7 +2523,7 @@ int Jidac::add() {
                     }
                   }
                   // max val
-                  if (buf[i]=='\n' && pfState!=3){
+                  if (buf[i]=='\n' && pfState!=IM1_PBM){
                      ++i;
                      while (buf[i]>='0' && buf[i]<='9') {
                        li=li*10+buf[i]-'0';
@@ -2534,15 +2532,14 @@ int Jidac::add() {
                     }
                   }
                   if (i>(3+comment+5+5+4)) {
-                      pfState=0;
+                      pfState=IM_NONE;
                       break;
                   }
               }
-              
-              if (wi && hi && li>=0 && li<=255 && pfState==12) imbWidth=wi,pfData=wi*hi+i+1;
-              else if (wi && hi && li==0 && pfState==3) imbWidth=(wi+7)/8,pfData=imbWidth*hi+i+1;
-              else if (wi && hi && li==255 && pfState==1) pfState=5,imbWidth=wi*3,pfData=wi*3*hi+i+1;
-              else pfState=0;
+              if (wi && hi && li>=0 && li<=255 && pfState==IM8_PGM) imbWidth=wi,pfData=wi*hi+i+1;
+              else if (wi && hi && li==0 && pfState==IM1_PBM) imbWidth=(wi+7)/8,pfData=imbWidth*hi+i+1;
+              else if (wi && hi && li==255 && pfState==IM24_PPM) imbWidth=wi*3,pfData=wi*3*hi+i+1;
+              else pfState=IM_NONE;
           }
           
           // process fragment
@@ -2639,8 +2636,8 @@ int Jidac::add() {
         if (fi==vf.size()) newblock=true;  // last file?
         if (frags<1) newblock=false;  // block is empty?
         // foce new block before and after BMP image
-        if (isBMP &&  fsize==0) newblock = true; // file was BMP
-        else if (sb.size()>0 && pfData && fsize==0) newblock = true; // insert first BMP fragment
+        if (isBMP &&  fsize==0 && imbWidth!=info) newblock = true; // file was BMP
+        else if (sb.size()>0 && pfData && fsize==0 && imbWidth!=info) newblock = true; // insert first BMP fragment
         // Pad sb with fragment size list, then compress
         if (newblock) {
           assert(frags>0);
@@ -2652,7 +2649,7 @@ int Jidac::add() {
           string m=method;
           if (isdigit(method[0]))
             m+=","+itos(redundancy/(sb.size()/256+1))
-                 +","+itos((exe>frags)*2+(text>frags))+"," +itos(isBMP)+"," + itos(info);
+                 +","+itos((exe>frags)*2+(text>frags)+(img>frags)*4)+"," +itos(isBMP)+"," + itos(info);
           string fn="jDC"+itos(date, 14)+"d"+itos(ht.size()-frags, 10);
           print_progress(total_size, total_done, summary);
           if (summary<=0)
@@ -2667,8 +2664,9 @@ int Jidac::add() {
           }
           assert(sb.size()==0);
           blocklist.push_back(ht.size()-frags);  // mark block start
-          if (isBMP==0 && pfState==0) pfData = 0;
-          frags=redundancy=text=exe=0;
+          if (isBMP==IM_NONE && pfState==IM_NONE) pfData = 0;
+          frags=redundancy=text=exe=img=0;
+          imbWidth=pfState==IM_NONE?0:imbWidth;
           memset(o1prev, 0, sizeof(o1prev));
         }
         // Append fragbuf to sb and update block statistics
@@ -2678,6 +2676,7 @@ int Jidac::add() {
         redundancy+=hits;
         exe+=exe1*(3+(fragment>=6));
         text+=text1*2;
+        img+=isBMP?2:0;
         if (sz>=MIN_FRAGMENT) {
           memmove(o1prev, o1prev+256, 256*(ON-1));
           memcpy(o1prev+256*(ON-1), o1, 256);
@@ -2696,7 +2695,7 @@ int Jidac::add() {
       }
       if (c == EOF) {
           // reset BMP if deduplicated
-          if (pfState && fsize != pfData) pfState=0, imbWidth=0;
+          if (pfState && fsize != pfData) pfState=IM_NONE/*, imbWidth=0*/;
           break;
       }
     }  // end for each fragment fj
