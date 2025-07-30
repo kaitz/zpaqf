@@ -8061,7 +8061,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
   // Get type from method "LB,R,t" where L is level 0..5, B is block
   // size 0..11, R is redundancy 0..255, t = 0..3 = binary, text, exe, both.
   unsigned type=0;
-  unsigned special = 0,info=0,img=0; //image type, info about image, block is mostly images
+  unsigned special = 0,info=0,files=0; //image type, info about image, file=0 or files=1
   if (isdigit(method[0])) {
     int commas=0, arg[6]={0};
     for (int i=1; i<int(method.size()) && commas<6; ++i) {
@@ -8070,7 +8070,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
     }
     if (commas==0) type=512;
     else {
-        if ((arg[2]&4)==4) img=1,arg[2]=arg[2]&3;
+        if ((arg[2]&4)==4) files=1,arg[2]=arg[2]&3;
         type=arg[1]*4+arg[2];
     }
     special = arg[3]; 
@@ -8130,7 +8130,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
     // LZ77 with CM depending on redundancy
     else if (level==3) {
       if (special==IM8_PGM || special==IM24_PPM || special==IM8_BMP|| special==IM24_BMP) // bmp 24, 8 bit, ppm, pgm
-        method+=",c0.0.255."+itos(info-2+1000)+".255n1,8,0,0,1n1,8,0,3,1";
+        method+=",c0.0.255."+itos(info-2+1000)+".255n1,8,0,0,1n1,8,0,3,1"+(files?"a192m":"");
       //  special==7 32bit image, no specal model
       else if (special==IM1_PBM ||special==IM1_BMP ) // 1 bit
         method+=",c0.0.7."+itos(info-2+1000)+".255";
@@ -8189,11 +8189,11 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       else if (special==IM1_PBM || special==IM1_BMP)   // 1 bit
         method+=",c0.0.7."+itos(info-2+1000)+".255i2m1";
       else if (special==IM8_PGM || special==IM8_BMP)
-        method+=",c0.0.255."+itos(info-2+1000)+".255i2c0.0.255."+itos(info*2-2+1000)+".255i2m";    // 8 bit bmp pgm  
+        method+=",c0.0.255."+itos(info-2+1000)+".255i2c0.0.255."+itos(info*2-2+1000)+".255i2m";    // 8 bit bmp pgm
       else if (special==IM4_BMP)   // 4 bit
         method+=",c0.0.15." + itos(info-2+1000)+".255i2n0,4,0,1,0m16,10";
       else if (special==IM32_BMP)   // 32 bit
-        method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16";
+        method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16,24,255,3";
       else if (type<20)
         method+=",0";
       else if (type<24)
@@ -8310,7 +8310,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       else if (special==IM8_PGM)
           method+=",12";     // 8 bit pgm
       else if (special==IM32_BMP)   // 32 bit
-          method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16";
+          method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16,24,255,3";
       else if (type<9) // store if not compressible
           method+=",0";
       else if (type&1) {
@@ -8367,7 +8367,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
           method+=","+itos(doe8);
           if ((type&1) && type>100) method += "w2,65,26,223,191,0c0,1010,255i1";
           else if (type&1) method+="w2c0,1010,255i1";
-          else method+="w1i1";
+          else if (doe8!=4) method+="w1i1";
           if (type&1) method+="c256ci1,1,1,1,1,2,2a";
           else if (isPeriod==true && lowP>1 && lowP<11) {
               int p=2,maxP=lowP;
@@ -8391,6 +8391,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
           method+=speriod;
           if ((type&1) && (type>100)) method += "m10,4,1m16ts19t0";
           else if (isPeriod==true) method += "mm16ts19t0";
+          else if (doe8==4) method+="c0,2,0,255i1c0,3,0,0,255i1c0,4,0,0,0,255i1n1,18,1,1,1mm16ts19,15,255,2t0";
           else method+="c0,2,0,255i1c0,3,0,0,255i1c0,4,0,0,0,255i1mm16ts19t0";
       }
     }

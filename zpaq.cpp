@@ -2388,7 +2388,7 @@ int Jidac::add() {
   unsigned redundancy=0;  // estimated bytes that can be compressed out of sb
   unsigned text=0;     // number of fragents containing text
   unsigned exe=0;      // number of fragments containing x86 (exe, dll)
-  unsigned img=0;      // number of fragments containing images (bmp, ppm, pgm, pbm)
+  unsigned files=0;      // number of fragments containing images (bmp, ppm, pgm, pbm)
   const int ON=4;      // number of order-1 tables to save
   const int level=isdigit(method[0])?(method[0]-'0'):-1;
   unsigned char o1prev[ON*256]={0};  // last ON order 1 predictions
@@ -2450,7 +2450,7 @@ int Jidac::add() {
           if (level>2 && isFBMP==true && bufptr==0 && buflen==BUFSIZE && pfState==IM_NONE) {
               zpBMFILEHEADER &bmHdr=(zpBMFILEHEADER&)buf;
              zpBMOSFILEHEADER &bmHdr1=(zpBMOSFILEHEADER&)buf;
-              if (bmHdr.bfType==0x4d42 && bmHdr.bfSize==infSize && blocksize>bmHdr.bfSize && bmHdr.bfSize>256 &&
+              if (bmHdr.bfType==0x4d42 && bmHdr.bfSize==infSize && blocksize>bmHdr.bfSize && bmHdr.bfSize>16 &&
                   (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078|| bmHdr.bfOffBits==26|| bmHdr.bfOffBits==794 || bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved==0) {
                   if (bmHdr.bfOffBits!=26 && bmHdr.biWidth<0xffff && bmHdr.biWidth>16  && bmHdr.biCompression==0 && bmHdr.biPlanes==1) {
                       if (bmHdr.biBitCount==24 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER) && bmHdr.biWidth>16) {
@@ -2636,8 +2636,8 @@ int Jidac::add() {
         if (fi==vf.size()) newblock=true;  // last file?
         if (frags<1) newblock=false;  // block is empty?
         // foce new block before and after BMP image
-        if (isBMP &&  fsize==0 && imbWidth!=info) newblock = true; // file was BMP
-        else if (sb.size()>0 && pfData && fsize==0 && imbWidth!=info) newblock = true; // insert first BMP fragment
+        if (isBMP &&  fsize==0 && (imbWidth!=info  || (imbWidth/3)>1024)) newblock = true; // file was BMP
+        else if (sb.size()>0 && pfData && fsize==0 && (imbWidth!=info  || (imbWidth/3)>1024)) newblock = true; // insert first BMP fragment
         // Pad sb with fragment size list, then compress
         if (newblock) {
           assert(frags>0);
@@ -2649,7 +2649,7 @@ int Jidac::add() {
           string m=method;
           if (isdigit(method[0]))
             m+=","+itos(redundancy/(sb.size()/256+1))
-                 +","+itos((exe>frags)*2+(text>frags)+(img>frags)*4)+"," +itos(isBMP)+"," + itos(info);
+                 +","+itos((exe>frags)*2+(text>frags)+(files>0)*4)+"," +itos(isBMP)+"," + itos(info);
           string fn="jDC"+itos(date, 14)+"d"+itos(ht.size()-frags, 10);
           print_progress(total_size, total_done, summary);
           if (summary<=0)
@@ -2665,7 +2665,7 @@ int Jidac::add() {
           assert(sb.size()==0);
           blocklist.push_back(ht.size()-frags);  // mark block start
           if (isBMP==IM_NONE && pfState==IM_NONE) pfData = 0;
-          frags=redundancy=text=exe=img=0;
+          frags=redundancy=text=exe=files=0;
           imbWidth=pfState==IM_NONE?0:imbWidth;
           memset(o1prev, 0, sizeof(o1prev));
         }
@@ -2676,7 +2676,6 @@ int Jidac::add() {
         redundancy+=hits;
         exe+=exe1*(3+(fragment>=6));
         text+=text1*2;
-        img+=isBMP?2:0;
         if (sz>=MIN_FRAGMENT) {
           memmove(o1prev, o1prev+256, 256*(ON-1));
           memcpy(o1prev+256*(ON-1), o1, 256);
@@ -2694,6 +2693,7 @@ int Jidac::add() {
         vf[fi]->second.ptr.push_back(htptr);
       }
       if (c == EOF) {
+          files++;
           // reset BMP if deduplicated
           if (pfState && fsize != pfData) pfState=IM_NONE/*, imbWidth=0*/;
           break;
