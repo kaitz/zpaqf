@@ -2649,7 +2649,7 @@ int Jidac::add() {
           string m=method;
           if (isdigit(method[0]))
             m+=","+itos(redundancy/(sb.size()/256+1))
-                 +","+itos((exe>frags)*2+(text>frags)+(files>0)*4)+"," +itos(isBMP)+"," + itos(info);
+                 +","+itos((exe>frags)*2+(text>frags)+(files>1)*4)+"," +itos(isBMP)+"," + itos(info);
           string fn="jDC"+itos(date, 14)+"d"+itos(ht.size()-frags, 10);
           print_progress(total_size, total_done, summary);
           if (summary<=0)

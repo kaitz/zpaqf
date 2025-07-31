@@ -7900,7 +7900,10 @@ std::string makeConfig(const char* method, int args[]) {
          if (v[0] == 't') hcomp += "  (mixer2 context)\n";
          if (v[0] == 's') hcomp += "  (SSE context)\n"; 
         hcomp+="d= "+itos(ncomp)+" *d=0 b=c a=0\n";
-        if (v[0] == 's' && v[4]!=0) hcomp+="a= "+itos(v[4]/256)+" a<<= 8 a+= "+itos(v[4]&255)+" a+=b b=a a=0 "; 
+        if (v[0] == 's' && v[4]!=0) {
+            if (v[4]<256) hcomp+=" a= "+itos(v[4]&255)+" a+=b b=a a=0 "; 
+            else hcomp+="a= "+itos(v[4]/256)+" a<<= 8 a+= "+itos(v[4]&255)+" a+=b b=a a=0 "; 
+        }
         for (; v[1]>=16; v[1]-=8) {
           hcomp+="a<<= 8 a+=*b";
           if (v[1]>16) hcomp+=" b++";
@@ -8185,14 +8188,16 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
     // LZ77+CM, fast CM, or BWT depending on type
     else if (level==4) {
       if (special==IM24_PPM ||  special==IM24_BMP)
-        method+=",c0."+itos(3)+".255i3c0.0.511."+itos(info-2+1000)+".255n1,8,8,3,1a192m11,24,3s24,16,255,"+itos(info-1);    // 24 bit ppm bmp
+        method+=",c0."+itos(3)+".255i2c0.0.511."+itos(info-2+1000)+".255n1,8,0,3,1"+(files?"a192":"")+"m11,24,3";
       else if (special==IM1_PBM || special==IM1_BMP)   // 1 bit
         method+=",c0.0.7."+itos(info-2+1000)+".255i2m1";
-      else if (special==IM8_PGM || special==IM8_BMP)
-        method+=",c0.0.255."+itos(info-2+1000)+".255i2c0.0.255."+itos(info*2-2+1000)+".255i2m";    // 8 bit bmp pgm
-      else if (special==IM4_BMP)   // 4 bit
-        method+=",c0.0.15." + itos(info-2+1000)+".255i2n0,4,0,1,0m16,10";
-      else if (special==IM32_BMP)   // 32 bit
+      else if (special==IM8_PGM || special==IM8_BMP) {
+           if (type<600) method+=",c0.0.255."+itos(info-2+1000)+".255c0.0.255."+itos(info*2-2+1000)+".255t8s16,20,255,"+itos(info-2);    // 8 bit bmp pgm slow!
+           else method+="c0.0.255."+itos(info-2+1000)+".255s16,20,255,"+itos(info-2);
+      } else if (special==IM4_BMP) {  // 4 bit
+           if (type<600) method+=",c0.0.15." + itos(info-2+1000)+".255i2n0,4,0,1,0m16,10";
+           else method+="c0.0.15." + itos(info-2+1000)+".255n0,4,0,1,0t0s16,24,255," + itos(info-2);
+      } else if (special==IM32_BMP)   // 32 bit
         method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16,24,255,3";
       else if (type<20)
         method+=",0";
@@ -8306,7 +8311,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       else if (special==IM1_PBM || special==IM1_BMP) // 1 bit
           method+=",c0.0.7." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2m10,4,0";//?
       else if (special==IM4_BMP) // 4 bit
-          method+=",c0.0.15." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2m10,4,0";//?
+          method+=",c0.0.15." + itos(info-2+1000)+".255i2c0.0.15."+itos(info*2-2+1000)+".255i2n0,4,0,1,0m10,4,0s16,24,255," + itos(info-2);
       else if (special==IM8_PGM)
           method+=",12";     // 8 bit pgm
       else if (special==IM32_BMP)   // 32 bit
