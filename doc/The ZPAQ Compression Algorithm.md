@@ -249,10 +249,10 @@ order     BOOK1   -method
 **Indirect SSE**   
 An ISSE modifies a prediction like an SSE, except that it uses a bit history (like an ICM) and a linear  adjustment in the logistic domain rather than an interpolated table. It maps a context hash to a bit  history, which is used to select a pair of weights for mixing the input prediction with a constant. Given  an input prediction p, the output is p' \= squash(w<sub>1</sub> stretch(p) \+ w<sub>2</sub>), where w<sub>1</sub> and w<sub>2</sub> are selected by a  bit history. The initial weights are 1 and 0, which results in no change to p. After the bit is coded, the  weights are adjusted: 
 
-    error = bit - p'.   
-    L = 1/256.   
-    w<sub>1</sub> := w<sub>1</sub> + L * error * stretch(p).   
-    w<sub>2</sub> := w<sub>2</sub> + L * error * 4\. 
+   error = bit - p'.   
+   L = 1/256.   
+   w<sub>1</sub> := w<sub>1</sub> + L * error * stretch(p).   
+   w<sub>2</sub> := w<sub>2</sub> + L * error * 4\. 
 
 An ISSE is better suited for higher order contexts than an SSE because it uses 1 byte of memory per  context instead of 128 bytes. A typical use is to chain them onto a CM or ICM with each link increasing the context order. The method i*n<sub>1</sub>.n<sub>2</sub>.n<sub>3</sub>*... defines a chain in which the first ISSE context is an order  n1 context hash combined with the context of the previous component from which it takes its  prediction, and the remaining n<sub>2</sub>, n<sub>3</sub>... are additional ISSEs that increase the context order by that  amount. 
 
