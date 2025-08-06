@@ -9,7 +9,7 @@ Fallowing typse are used for special image models:
 IM1_PBM, IM8_PGM, IM24_PPM, IM1_BMP, IM4_BMP, IM8_BMP, IM24_BMP, IM32_BMP
 
 If file extension matches to .bmp, .pbm, .pgm, .ppm then image header is tested for valid header.
-Images with byte width lower then 1024 are in solid block otherwise each image is in individual block.
+Images with byte width lower then 1024 are in solid block assuming that they have the same width, otherwise each image is in individual block.
 In method 5 images with bit depth 8, 24 have special models that parse the file header to find the width. Otherwise, the byte width of the image is transmitted along with the block information.    
 Method 5 also has special model for text.
 
@@ -76,7 +76,7 @@ IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (whe
 2..255 mid period (11-29): ```-method x3,0w1i1c256ciK,Jac0,0,L,255i1c0,Ji1mm16ts19t0``` (where J=period, K=J/2, L=J+999)    
 2..255 low period, high period(1-10,>30): ```-method x6,0w1i1c256ciJ,Kn,Lac0,0,Y,255i1c0,Wi1c0,0,M,255i1c0,Li1mm16ts19t0``` (where L=low period J=2, Kn=J+1, Kn=K(n-1)+1 ... while Kn<L-K(n-1), M=L+999; W=high period Y=W+999)    
 
-#### Large models for different data types.
+### Large models for different data types.
 
 **-method x0,8 -method x0,9**    
 24 bit image model
