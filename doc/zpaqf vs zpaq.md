@@ -25,10 +25,10 @@ No change.
 
 Method 3 uses special types to select the model of the identified data, such as:    
 
-IM1_PBM, IM1_BMP: ```-method x0,c0.0.7.K.255``` (where J=byte width, K=J-1+999) (1 bit bmp or pbm image)    
-IM4_BMP: ```-method x0,0c0.0.15.K.255``` (where J=byte width, K=J-1+999) (4 bit bmp image)    
-IM8_PGM, IM8_BMP, IM24_PPM, IM24_BMP: ```-method x0,c0.0.255.K.255n1,8,0,0,1n1,8,0,3,1Mm``` (where J=byte width, K=J-1+999, if multiple files in blok M=a192) (8, 24 bit bmp, pgm, pgm image)    
-IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (where J=byte width, K=J-1+999) (32 bit bmp image)    
+IM1_PBM, IM1_BMP: ```-method x0,c0.0.7.K.255``` (where J=byte width, K=J-1+999)    
+IM4_BMP: ```-method x0,0c0.0.15.K.255``` (where J=byte width, K=J-1+999)    
+IM8_PGM, IM8_BMP, IM24_PPM, IM24_BMP: ```-method x0,c0.0.255.K.255n1,8,0,0,1n1,8,0,3,1Mm``` (where J=byte width, K=J-1+999, if multiple files in blok M=a192)    
+IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (where J=byte width, K=J-1+999)     
 
 0..5: ```-method x0,0``` (no compression).    
 6..11: ```-method x6,1.4.0.3.25``` (fast LZ77).    
@@ -39,11 +39,11 @@ IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (whe
 
 Method 4 uses special types to select the model of the identified data, such as:    
 
-IM1_PBM, IM1_BMP: ```-method x0,c0.0.7.K.255m1``` (where J=byte width, K=J-1+999) (1 bit bmp or pbm image)    
-IM4_BMP: ```-method x0,c0.0.15.K.255i2n0,4,0,1,0m16,10``` (where J=byte width, K=J-1+999) (4 bit bmp image)    
-IM8_PGM, IM8_BMP: ```-method x0,c0.0.255.K.255c0.0.255.L.255t8s16,20,255,M``` (where J=byte width, K=J-1+999, L=J*2-1+999, M=J-2) (8 bit bmp, pgm image)    
-IM24_PPM, IM24_BMP: ```-method x0,c0.3.255i2c0.0.511.K.255n1,8,0,3,1Mm11,24,3``` (where J=byte width, K=J-1+999, if multiple files in blok M=a192) (24 bit bmp, ppm)    
-IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (where J=byte width, K=J-1+999) (32 bit bmp image)    
+IM1_PBM, IM1_BMP: ```-method x0,c0.0.7.K.255m1``` (where J=byte width, K=J-1+999)     
+IM4_BMP: ```-method x0,c0.0.15.K.255i2n0,4,0,1,0m16,10``` (where J=byte width, K=J-1+999)     
+IM8_PGM, IM8_BMP: ```-method x0,c0.0.255.K.255c0.0.255.L.255t8s16,20,255,M``` (where J=byte width, K=J-1+999, L=J*2-1+999, M=J-2)     
+IM24_PPM, IM24_BMP: ```-method x0,c0.3.255i2c0.0.511.K.255n1,8,0,3,1Mm11,24,3``` (where J=byte width, K=J-1+999, if multiple files in blok M=a192)     
+IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (where J=byte width, K=J-1+999)     
 
 0..4: ```-method x0,0``` (no compression).    
 5..5: ```-method x6,1.4.0.3.25``` (fast LZ77)    
@@ -59,13 +59,13 @@ IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (whe
 
 Method 5 uses special types to select the model of the identified data, such as:
 
-IM1_PBM, IM1_BMP: ```-method x0,c0.0.7.K.255i2c0.0.15.L.255i2m10,4,0``` (where J=byte width, K=J-1+999, L=J\*2-1+999) (1 bit bmp or pbm image)    
-IM4_BMP: ```-method x0,c0.0.15.K.255i2c0.0.15.L.255i2n0,4,0,1,0m10,4,0s16,24,255,M``` (where J=byte width, K=J-1+999, L=J*2-1+999, M=J-2) (4 bit bmp image)    
-IM8_PGM: ```-method x0,12``` (8 bit pgm image)    
-IM8_BMP: ```-method x0,11``` (8 bit bmp)    
-IM24_PPM: ```-method x0,9``` (24 bit bmp)    
-IM24_BMP: ```-method x0,8``` (24 bit ppm image)    
-IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (where J=byte width, K=J-1+999) (32 bit bmp image)    
+IM1_PBM, IM1_BMP: ```-method x0,c0.0.7.K.255i2c0.0.15.L.255i2m10,4,0``` (where J=byte width, K=J-1+999, L=J\*2-1+999)     
+IM4_BMP: ```-method x0,c0.0.15.K.255i2c0.0.15.L.255i2n0,4,0,1,0m10,4,0s16,24,255,M``` (where J=byte width, K=J-1+999, L=J*2-1+999, M=J-2)     
+IM8_PGM: ```-method x0,12```     
+IM8_BMP: ```-method x0,11```     
+IM24_PPM: ```-method x0,9```     
+IM24_BMP: ```-method x0,8```     
+IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (where J=byte width, K=J-1+999)     
 
 0..2: ```-method x0,0``` (no compression)    
 2..255 and text with brackets: ```-method x0,10,1```    
