@@ -14,11 +14,11 @@ In method 5 images with bit depth 8, 24 have special models that parse the file 
 Method 5 also has special model for text.
 
 ### Mixer
-Has a new parameter. Before default values for mixer was ```m,8,24,0``` now ```m,8,24,0,0```.    
-Last parameters selects how many upper bits of last byte are used as a context.    
+Has a two new parameters. Before default values for mixer was ```m8,24``` now ```m8,24,0,0```.    
+Last two parameters (N2, N3) selects how many upper bits (N3) of last byte are used as a context. Assuming that N0>8. If N3=1 then last byte is subtracted by 1.    
 
 ### SSE - Secondary Symbol Estimator
-Has a new parameter. Before default values for SSE was ```s,8,32,255``` now ```s,8,32,255,0```.    
+Has a new parameter. Before default values for SSE was ```s8,32,255``` now ```s8,32,255,0```.    
 Last parameters selects how many last bytes to skip before we use them as contexts.   
 
 ### Indirect o1/o2 with or without n'th byte
