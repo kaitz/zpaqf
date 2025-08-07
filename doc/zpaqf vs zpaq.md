@@ -13,6 +13,26 @@ Images with byte width lower then 1024 are in solid block assuming that they hav
 In method 5 images with bit depth 8, 24 have special models that parse the file header to find the width. Otherwise, the byte width of the image is transmitted along with the block information.    
 Method 5 also has special model for text.
 
+### Mixer
+Has a new parameter. Before default values for mixer was ```m,8,24,0``` now ```m,8,24,0,0```.    
+Last parameters selects how many upper bits of last byte are used as a context.    
+
+### SSE - Secondary Symbol Estimator
+Has a new parameter. Before default values for SSE was ```s,8,32,255``` now ```s,8,32,255,0```.    
+Last parameters selects how many last bytes to skip before we use them as contexts.   
+
+### Indirect o1/o2 with or without n'th byte
+Default values for n contexts are ```n0,0,0,1,0```.    
+Context predictors can be ICM or ISSE.    
+Parameters from left to right are:    
+
+    N0 0=ICM, 1=ISSE
+    N1 mem=membits-N1
+    N2 indirect maskbits (0=32 reverse)
+    N3 indirect stream shift bits (32=no indirect stream)
+    N4 last N4'th byte (0=no bytes)
+    N5 indirect width in bytes or order 1, 2 (0=1,1=2 bytes)
+
 ### Differences in method 1
 
 No change.
