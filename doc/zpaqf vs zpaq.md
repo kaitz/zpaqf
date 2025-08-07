@@ -27,11 +27,10 @@ Context predictors can be ICM or ISSE.
 Parameters from left to right are:    
 
     N0 0=ICM, 1=ISSE
-    N1 mem=membits-N1
-    N2 indirect maskbits (0=32 reverse)
-    N3 indirect stream shift bits (32=no indirect stream)
-    N4 last N4'th byte (0=no bytes)
-    N5 indirect width in bytes or order 1, 2 (0=1,1=2 bytes)
+    N1 indirect maskbits (0=32 reverse)
+    N2 indirect stream shift bits (32=no indirect stream)
+    N3 last N3'th byte (0=no bytes)
+    N4 indirect width in bytes or order 1, 2 (0=1,1=2 bytes)
 
 ### Differences in method 1
 
