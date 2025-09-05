@@ -1,6 +1,6 @@
 // zpaq.cpp - Journaling incremental deduplicating archiver
 
-#define ZPAQ_VERSION "7.15.4f"
+#define ZPAQ_VERSION "7.15.5f"
 /*
   This software is provided as-is, with no warranty.
   I, Matt Mahoney, release this software into
@@ -2431,6 +2431,7 @@ int Jidac::add() {
     info=imbWidth;
     pfState=IM_NONE,imbWidth=0;
     bool isFBMP=ext==".bmp";
+    bool isFJPG=ext==".jpg";
     bool isFBPM=(ext==".pgm" || ext==".pbm" || ext==".ppm");
     for (unsigned fj=0; true; ++fj) {
       int64_t sz=0;  // fragment size;
@@ -2487,7 +2488,7 @@ int Jidac::add() {
               }
           }
           // multiline pgm pbm ppm
-          if (level>2 && isFBPM==true && bufptr==0 && buflen==BUFSIZE && pfState==IM_NONE) {
+          else if (level>2 && isFBPM==true && bufptr==0 && buflen==BUFSIZE && pfState==IM_NONE) {
               std::string hdr=std::string(&buf[0], 3);
               if (hdr=="P5\n") pfState=IM8_PGM;
               else if (hdr=="P6\n") pfState=IM24_PPM;
@@ -2540,6 +2541,12 @@ int Jidac::add() {
               else if (wi && hi && li==0 && pfState==IM1_PBM) imbWidth=(wi+7)/8,pfData=imbWidth*hi+i+1;
               else if (wi && hi && li==255 && pfState==IM24_PPM) imbWidth=wi*3,pfData=wi*3*hi+i+1;
               else pfState=IM_NONE;
+          }
+          else if (level>2 && isFJPG==true && bufptr==0 && buflen==BUFSIZE && pfState==IM_NONE) {
+              // content not tested
+              pfState=IM_JPG;
+              pfData=infSize;
+              imbWidth=1; // fake, to keep all jpeg files in same block
           }
           
           // process fragment
@@ -2664,7 +2671,7 @@ int Jidac::add() {
           }
           assert(sb.size()==0);
           blocklist.push_back(ht.size()-frags);  // mark block start
-          if (isBMP==IM_NONE && pfState==IM_NONE) pfData = 0;
+          if (isBMP==IM_NONE && pfState==IM_NONE || isBMP==IM_JPG && pfState==IM_NONE) pfData = 0;
           frags=redundancy=text=exe=files=0;
           imbWidth=pfState==IM_NONE?0:imbWidth;
           memset(o1prev, 0, sizeof(o1prev));

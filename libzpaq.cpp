@@ -7927,7 +7927,7 @@ std::string makeConfig(const char* method, int args[]) {
           hcomp += " a=*c ";
           if (v[4]) hcomp += " a--";
           if (v[1] > 8)  hcomp += " a<<= " + itos(v[1] - 8);
-          hcomp += + " a&=b *d=a \n";
+          hcomp += " a&=b *d=a \n";
       }
       ++ncomp;
     }
@@ -8000,11 +8000,12 @@ std::string makeConfig(const char* method, int args[]) {
     }
     // Indirect o1/o2 context with or without n'th byte
     // n0,0,0,1,0: ICM, ISSE
-    // N1=membits-N1 (0),
-    // N2 indirect maskbits (0=32 reverse),
-    // N3 indirect stream shift bits (0) (32=no indirect stream),
-    // N4 last N4'th byte (1) (0=no bytes)
-    // N5 indirect width in bytes (0=1,1=2 bytes)
+    // N0 0=ICM, 1=ISSE 
+    //    =membits-N0 (0),
+    // N1 indirect maskbits (0=32 reverse),
+    // N2 indirect stream shift bits (0) (32=no indirect stream),
+    // N3 last N4'th byte (1) (0=no bytes)
+    // N4 indirect width in bytes (0=1,1=2 bytes)
     if (v[0]=='n') {
          hcomp += "  (indirect and/or byte)\n";
       if (v.size()<=1) v.push_back(0); // 0 icm, 1 isse
@@ -8139,7 +8140,9 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
         method+=",c0.0.7."+itos(info-2+1000)+".255";
       else if (special==IM4_BMP) // 4 bit
         method+=",c0.0.15."+itos(info-2+1000)+".255";
-      else if (type<20)  // store if not compressible
+      else if (special==IM_JPG)
+        method+=",c0.0.7.255i2,1m";
+      else if (type<21)  // store if not compressible 20?
         method+=",0";
       else if (type<48)  // fast LZ77 if barely compressible
         method+=","+itos(1+doe8)+",4,0,3"+htsz;
@@ -8199,6 +8202,8 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
            else method+="c0.0.15." + itos(info-2+1000)+".255n0,4,0,1,0t0s16,24,255," + itos(info-2);
       } else if (special==IM32_BMP)   // 32 bit
         method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16,24,255,3";
+      else if (special==IM_JPG)
+        method+=",c0.0.7.255i2,1s16,18,63";
       else if (type<20)
         method+=",0";
       else if (type<24)
@@ -8316,6 +8321,8 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
           method+=",12";     // 8 bit pgm
       else if (special==IM32_BMP)   // 32 bit
           method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16,24,255,3";
+      else if (special==IM_JPG)
+          method+=",c0.0.7.255i2,1s16,18,63"; //am
       else if (type<9) // store if not compressible
           method+=",0";
       else if (type&1) {
