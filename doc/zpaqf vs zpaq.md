@@ -90,13 +90,13 @@ IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (whe
 IM_JPG: ```-method x0,c0.0.7.255i2,1s16,18,63```     
 
 0..2: ```-method x0,0``` (no compression)    
-2..255 and text with brackets: ```-method x0,10,1```    
-2..255 and text: ```-method x0,10,0```    
-2..255 and E8E9: ```-method x3,4c256ci1,1,1,1,1,1,2ac0,2,0,255i1c0,3,0,0,255i1c0,4,0,0,0,255i1n1,18,1,1,1mm16ts19,15,255,2t0```    
-2..255 no periodic models: ```-method x2,0w1i1c256ci1,1,1,1,1,1,2ac0,2,0,255i1c0,3,0,0,255i1c0,4,0,0,0,255i1mm16ts19t0```    
-2..255 high period (>30): ```-method x0,0w1i1c256ci1,1,1,1,1,1,2ac0,0,K,255i1c0,Ji1c0,0,L,255i1mm16ts19t0``` (where J=period, K=J+999, L=J*2+999, ...)    
-2..255 mid period (11-29): ```-method x3,0w1i1c256ciK,Jac0,0,L,255i1c0,Ji1mm16ts19t0``` (where J=period, K=J/2, L=J+999)    
-2..255 low period, high period(1-10,>30): ```-method x6,0w1i1c256ciJ,Kn,Lac0,0,Y,255i1c0,Wi1c0,0,M,255i1c0,Li1mm16ts19t0``` (where L=low period J=2, Kn=J+1, Kn=K(n-1)+1 ... while Kn<L-K(n-1), M=L+999; W=high period Y=W+999)    
+3..255 and text with brackets: ```-method x0,10,1```    
+3..255 and text: ```-method x0,10,0```    
+3..255 and E8E9: ```-method x3,4c256ci1,1,1,1,1,1,2ac0,2,0,255i1c0,3,0,0,255i1c0,4,0,0,0,255i1n1,18,1,1,1mm16ts19,15,255,2t0```    
+3..255 no periodic models: ```-method x2,0w1i1c256ci1,1,1,1,1,1,2ac0,2,0,255i1c0,3,0,0,255i1c0,4,0,0,0,255i1mm16ts19t0```    
+3..255 high period (>30): ```-method x0,0w1i1c256ci1,1,1,1,1,1,2ac0,0,K,255i1c0,Ji1c0,0,L,255i1mm16ts19t0``` (where J=period, K=J+999, L=J*2+999, ...)    
+3..255 mid period (11-29): ```-method x3,0w1i1c256ciK,Jac0,0,L,255i1c0,Ji1mm16ts19t0``` (where J=period, K=J/2, L=J+999)    
+3..255 low period, high period(1-10,>30): ```-method x6,0w1i1c256ciJ,Kn,Lac0,0,Y,255i1c0,Wi1c0,0,M,255i1c0,Li1mm16ts19t0``` (where L=low period J=2, Kn=J+1, Kn=K(n-1)+1 ... while Kn<L-K(n-1), M=L+999; W=high period Y=W+999)    
 
 ### Large models for different data types.
 
