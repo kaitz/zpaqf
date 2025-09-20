@@ -13,7 +13,7 @@ Images with byte width lower than 1024 are in solid block assuming that they hav
 In method 5 images with bit depth 8, 24 have special models that parse the file header to find the width. Otherwise, the byte width of the image is transmitted along with the block information.    
 Method 5 also has a special model for text.    
 
-On Windows UNC paths are used by default when accessing files (a=add, x=extract). To extract with older versions of zpaq ```-to``` command line option needs to be used. By renaming long paths to shorter version files can be extracted, but not into the original path. If command line option ```-to``` is not used then program prints an error message: ```path not found```    
+On Windows Universal naming convention (UNC) paths are used by default when accessing files (a=add, x=extract). To extract with older versions of zpaq ```-to``` command line option needs to be used. By renaming long paths to shorter version files can be extracted, but not into the original path. If command line option ```-to``` is not used then program prints an error message: ```path not found```    
 For zpaqfranz when extracting files with long path use command: ```e myarchive.zpaq -longpath```    
 
 ### Mixer

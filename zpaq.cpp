@@ -533,6 +533,78 @@ void printerr(const char* filename) {
 
 #endif
 
+// Global
+wchar_t* lastUNCpath = NULL;
+std::wstring cwd;    // last Current Working Directory (constant in application scope)
+bool cwdInit = false;
+
+// Lazy testing whether a local path / network path are absolute ("X:\" or "\\server\share")
+bool PathIsAbsolute(const wchar_t* path) {
+    return ((lstrlenW(path)>=2) &&
+        ((path[1]==':') ||                    // local path
+        ((path[0]=='\\') && (path[1]=='\\'))  // network path
+        ));
+}
+
+std::wstring ConvertToUNC(const std::wstring path, bool &isAbsolute) {
+    bool isUNC;
+    std::wstring uncPrefix, sfilename2 = path;
+    isUNC=sfilename2.substr(0, 2).compare(L"\\\\?\\")==0;
+    if (!isUNC) {
+        bool isNetwork=sfilename2.length()>2 && sfilename2.substr(0, 2).compare(L"\\\\")==0;
+        isAbsolute=isNetwork || PathIsAbsolute(sfilename2.c_str());
+        uncPrefix=isNetwork?L"\\\\?\\UNC":isAbsolute?L"\\\\?\\":L"";
+        isUNC=uncPrefix.length()>0;
+        if (isNetwork)
+            sfilename2=sfilename2.substr(1, sfilename2.length() - 1);
+        if (isUNC)
+            sfilename2=uncPrefix+sfilename2;
+    }
+    if (isUNC) { // UNC paths don't accept "/" instead of "\\"
+        while (true) {
+            size_t p=sfilename2.find(L"/");
+            if (p==string::npos) break;
+            sfilename2.replace(p, 2, L"\\");
+        }
+    }
+    return sfilename2;
+}
+
+// On first access init current UNC path.
+// Add current UNC path to use path if needed
+wchar_t* Get_UNC_Path(const char* path) {
+    // Init current path as UNC
+    if (!cwdInit) {
+        cwdInit=true;
+        wchar_t *_cwd=_wgetcwd(NULL, 1);
+        if (_cwd) {
+            std::wstring s=_cwd;
+            bool isAbsolute;
+            cwd=ConvertToUNC(s, isAbsolute);
+            int l;
+            if ((l=cwd.length())>0 && (cwd.substr(l-1, 1).compare(L"\\")!=0))
+                cwd += L"\\";
+        }
+    }
+    // Convet path to UNC, add current UNC path if user path is not full path
+    bool pathIsAbsolute;
+    std::wstring fpath=ConvertToUNC(utow(path),pathIsAbsolute);
+
+    std::wstring sfilename2;
+    if (pathIsAbsolute==true) sfilename2=fpath;
+    else if (path[0]=='.' && (path[1]=='/' || path[1]=='\\'))  sfilename2=cwd+utow(path+2);
+    else sfilename2=cwd+utow(path);
+
+    if (lastUNCpath) {
+        free(lastUNCpath);
+        lastUNCpath=NULL;
+    }
+    lastUNCpath=(wchar_t*)malloc((sfilename2.length() + 1) * sizeof(wchar_t));
+    if (!lastUNCpath) throw std::bad_alloc();
+    lstrcpy(lastUNCpath, sfilename2.c_str());
+    return lastUNCpath;
+}
+
 // Close fp if open. Set date and attributes unless 0
 void close(const char* filename, int64_t date, int64_t attr, FP fp=FPNULL) {
   assert(filename);
@@ -550,7 +622,7 @@ void close(const char* filename, int64_t date, int64_t attr, FP fp=FPNULL) {
   const bool ads=strstr(filename, ":$DATA")!=0;  // alternate data stream?
   if (date>0 && !ads) {
     if (fp==FPNULL)
-      fp=CreateFile(utow(filename).c_str(),
+      fp=CreateFile(Get_UNC_Path(filename),
                     FILE_WRITE_ATTRIBUTES,
                     FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
                     NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
@@ -571,7 +643,7 @@ void close(const char* filename, int64_t date, int64_t attr, FP fp=FPNULL) {
   }
   if (fp!=FPNULL) CloseHandle(fp);
   if ((attr&255)=='w' && !ads)
-    SetFileAttributes(utow(filename).c_str(), attr>>8);
+    SetFileAttributes(Get_UNC_Path(filename), attr>>8);
 #endif
 }
 
@@ -580,6 +652,7 @@ void ioerr(const char* msg) {
   printerr(msg);
   throw std::runtime_error(msg);
 }
+
 
 // Create directories as needed. For example if path="/tmp/foo/bar"
 // then create directories /, /tmp, and /tmp/foo unless they exist.
@@ -591,7 +664,7 @@ void makepath(string path, int64_t date=0, int64_t attr=0) {
 #ifdef unix
       mkdir(path.c_str(), 0777);
 #else
-      CreateDirectory(utow(path.c_str()).c_str(), 0);
+      CreateDirectory(Get_UNC_Path(path.c_str()), 0);
 #endif
       path[i]='/';
     }
@@ -1730,77 +1803,6 @@ string path(const string& fn) {
   return fn.substr(0, n);
 }
 
-// Global for performance sake. TODO: Move to static class or similar:
-wchar_t* lastUNCpath = NULL;
-std::wstring cwd;    // last Current Working Directory (constant in application scope)
-bool cwdInit = false;
-
-// Lazy testing whether a local path / network path are absolute ("X:\" or "\\server\share")
-bool PathIsAbsolute(const wchar_t* path) {
-    return ((lstrlenW(path)>=2) &&
-        ((path[1]==':') ||                    // local path
-        ((path[0]=='\\') && (path[1]=='\\'))  // network path
-        ));
-}
-
-std::wstring ConvertToUNC(const std::wstring path, bool &isAbsolute) {
-    bool isUNC;
-    std::wstring uncPrefix, sfilename2 = path;
-    isUNC=sfilename2.substr(0, 2).compare(L"\\\\?\\")==0;
-    if (!isUNC) {
-        bool isNetwork=sfilename2.length()>2 && sfilename2.substr(0, 2).compare(L"\\\\")==0;
-        isAbsolute=isNetwork || PathIsAbsolute(sfilename2.c_str());
-        uncPrefix=isNetwork?L"\\\\?\\UNC":isAbsolute?L"\\\\?\\":L"";
-        isUNC=uncPrefix.length()>0;
-        if (isNetwork)
-            sfilename2=sfilename2.substr(1, sfilename2.length() - 1);
-        if (isUNC)
-            sfilename2=uncPrefix+sfilename2;
-    }
-    if (isUNC) { // UNC paths don't accept "/" instead of "\\"
-        while (true) {
-            size_t p=sfilename2.find(L"/");
-            if (p==string::npos) break;
-            sfilename2.replace(p, 2, L"\\");
-        }
-    }
-    return sfilename2;
-}
-
-// On first access init current UNC path.
-// Add current UNC path to use path if needed
-wchar_t* Get_UNC_Path(const char* path) {
-    // Init current path as UNC
-    if (!cwdInit) {
-        cwdInit=true;
-        wchar_t *_cwd=_wgetcwd(NULL, 1);
-        if (_cwd) {
-            std::wstring s=_cwd;
-            bool isAbsolute;
-            cwd=ConvertToUNC(s, isAbsolute);
-            int l;
-            if ((l=cwd.length())>0 && (cwd.substr(l-1, 1).compare(L"\\")!=0))
-                cwd += L"\\";
-        }
-    }
-    // Convet path to UNC, add current UNC path if user path is not full path
-    bool pathIsAbsolute;
-    std::wstring fpath=ConvertToUNC(utow(path),pathIsAbsolute);
-
-    std::wstring sfilename2;
-    if (pathIsAbsolute==true) sfilename2=fpath;
-    else if (path[0]=='.' && (path[1]=='/' || path[1]=='\\'))  sfilename2=cwd+utow(path+2);
-    else sfilename2=cwd+utow(path);
-
-    if (lastUNCpath) {
-        free(lastUNCpath);
-        lastUNCpath=NULL;
-    }
-    lastUNCpath=(wchar_t*)malloc((sfilename2.length() + 1) * sizeof(wchar_t));
-    if (!lastUNCpath) throw std::bad_alloc();
-    lstrcpy(lastUNCpath, sfilename2.c_str());
-    return lastUNCpath;
-}
 
 // Insert external filename (UTF-8 with "/") into dt if selected
 // by files, onlyfiles, and notfiles. If filename
