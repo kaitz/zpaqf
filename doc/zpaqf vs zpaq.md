@@ -1,17 +1,20 @@
 # zpaqf vs zpaq
 Kaido Orav    
-zpaqf v7.15.4f, 06.08.2025    
+zpaqf v7.15.5f, 20.09.2025    
 
-### Differences between the zpaq (v7.15) and zpaqf (v7.15.4f) compression algorithm models.
+### Differences between the zpaq (v7.15) and zpaqf (v7.15.5f) compression algorithm models.
 
 zpaqf detects 1, 4, 8, 24, 32 bit bmp images and 1 bit pbm, 8 bit pgm, 24 ppm images. 
-Fallowing typse are used for special image models:
+Following types are used for special image models:
 IM1_PBM, IM8_PGM, IM24_PPM, IM1_BMP, IM4_BMP, IM8_BMP, IM24_BMP, IM32_BMP, IM_JPG
 
 If file extension matches to .bmp, .pbm, .pgm, .ppm then image header is tested for valid header.
-Images with byte width lower then 1024 are in solid block assuming that they have the same width, otherwise each image is in individual block.
+Images with byte width lower than 1024 are in solid block assuming that they have the same width, otherwise each image is in individual block.
 In method 5 images with bit depth 8, 24 have special models that parse the file header to find the width. Otherwise, the byte width of the image is transmitted along with the block information.    
-Method 5 also has special model for text.
+Method 5 also has a special model for text.    
+
+On Windows UNC paths are used by default when accessing files (a=add, x=extract). To extract with older versions of zpaq ```-to``` command line option needs to be used. By renaming long paths to shorter version files can be extracted, but not into the original path. If command line option ```-to``` is not used then program prints an error message: ```path not found```    
+For zpaqfranz when extracting files with long path use command: ```e myarchive.zpaq -longpath```    
 
 ### Mixer
 Has a two new parameters. Before default values for mixer was ```m8,24``` now ```m8,24,0,0```.    
