@@ -2630,7 +2630,7 @@ int Jidac::add() {
               else pfState=IM_NONE;
           }
           else if (level>2 && isFJPG==true && bufptr==0 && buflen<=BUFSIZE && buflen>512 && pfState==IM_NONE) {
-              if (buf[0]==0xFF && buf[0]==0xD8 && buf[0]==0xFF && buf[0]==0xE0) {
+              if ((unsigned char)buf[0]==0xFF && (unsigned char)buf[1]==0xD8 && (unsigned char)buf[2]==0xFF && (unsigned char)buf[3]==0xE0) {
                   pfState=IM_JPG;
                   pfData=infSize;
                   imbWidth=1; // fake, to keep all jpeg files in same block
@@ -2732,7 +2732,7 @@ int Jidac::add() {
           //if (newsize>=blocksize) newblock=true;  // won't fit?
         }
         if (sb.size()+sz+80+frags*4>=blocksize) newblock=true; // full?
-        
+
         if (fi==vf.size()) newblock=true;  // last file?
         // foce new block before and after BMP image
         if (isBMP &&  fsize==0 && (imbWidth!=info || (imbWidth/3)>1024)) newblock = true; // file was BMP
