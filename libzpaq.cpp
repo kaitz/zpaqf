@@ -8136,17 +8136,17 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       if (special==IM8_PGM || special==IM24_PPM || special==IM8_BMP|| special==IM24_BMP) // bmp 24, 8 bit, ppm, pgm
         method+=",c0.0.255."+itos(info-2+1000)+".255n1,8,0,0,1n1,8,0,3,1"+(files?"a192m":"");
       //  special==7 32bit image, no specal model
-      else if (special==IM1_PBM ||special==IM1_BMP ) // 1 bit
+      else if (special==IM1_PBM ||special==IM1_BMP) // 1 bit
         method+=",c0.0.7."+itos(info-2+1000)+".255";
       else if (special==IM4_BMP) // 4 bit
         method+=",c0.0.15."+itos(info-2+1000)+".255";
-      else if (special==IM_JPG)
-        method+=",c0.0.7.255i2,1m";
+      //else if (special==IM_JPG)
+      //  method+=",c0.0.7.255i2,1m";
       else if (type<21)  // store if not compressible 20?
         method+=",0";
       else if (type<48)  // fast LZ77 if barely compressible
         method+=","+itos(1+doe8)+",4,0,3"+htsz;
-      else if (type>=640 || (type&1)){  // BWT if text or highly compressible
+      else if (type>=640 || (type&1)) {  // BWT if text or highly compressible
         int lowP=0;
         if ((type&1)==0) {
           // Analyze the data
@@ -8203,7 +8203,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       } else if (special==IM32_BMP)   // 32 bit
         method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16,24,255,3";
       else if (special==IM_JPG)
-        method+=",c0.0.7.255i2,1s16,18,63";
+        method+=",c0.0.7.255i2,1m"; //"c0.0.7.255i2,1s16,18,63";
       else if (type<20)
         method+=",0";
       else if (type<24)

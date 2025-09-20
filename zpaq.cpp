@@ -1173,6 +1173,7 @@ string append_path(string a, string b) {
     else b=b[0]+b.substr(2), --nb;
   }
 #endif
+  if (nb>0 && b[0]=='.') b=b.substr(1);
   if (nb>0 && b[0]=='/') b=b.substr(1);
   if (na>0 && a[na-1]=='/') a=a.substr(0, na-1);
   return a+"/"+b;
@@ -1408,6 +1409,7 @@ int64_t Jidac::read_archive(const char* arc, int *errors) {
   fflush(stdout);
 
   // Test password
+  //if (password)
   {
     char s[4]={0};
     const int nr=in.read(s, 4);
@@ -1728,6 +1730,78 @@ string path(const string& fn) {
   return fn.substr(0, n);
 }
 
+// Global for performance sake. TODO: Move to static class or similar:
+wchar_t* lastUNCpath = NULL;
+std::wstring cwd;    // last Current Working Directory (constant in application scope)
+bool cwdInit = false;
+
+// Lazy testing whether a local path / network path are absolute ("X:\" or "\\server\share")
+bool PathIsAbsolute(const wchar_t* path) {
+    return ((lstrlenW(path)>=2) &&
+        ((path[1]==':') ||                    // local path
+        ((path[0]=='\\') && (path[1]=='\\'))  // network path
+        ));
+}
+
+std::wstring ConvertToUNC(const std::wstring path, bool &isAbsolute) {
+    bool isUNC;
+    std::wstring uncPrefix, sfilename2 = path;
+    isUNC=sfilename2.substr(0, 2).compare(L"\\\\?\\")==0;
+    if (!isUNC) {
+        bool isNetwork=sfilename2.length()>2 && sfilename2.substr(0, 2).compare(L"\\\\")==0;
+        isAbsolute=isNetwork || PathIsAbsolute(sfilename2.c_str());
+        uncPrefix=isNetwork?L"\\\\?\\UNC":isAbsolute?L"\\\\?\\":L"";
+        isUNC=uncPrefix.length()>0;
+        if (isNetwork)
+            sfilename2=sfilename2.substr(1, sfilename2.length() - 1);
+        if (isUNC)
+            sfilename2=uncPrefix+sfilename2;
+    }
+    if (isUNC) { // UNC paths don't accept "/" instead of "\\"
+        while (true) {
+            size_t p=sfilename2.find(L"/");
+            if (p==string::npos) break;
+            sfilename2.replace(p, 2, L"\\");
+        }
+    }
+    return sfilename2;
+}
+
+// On first access init current UNC path.
+// Add current UNC path to use path if needed
+wchar_t* Get_UNC_Path(const char* path) {
+    // Init current path as UNC
+    if (!cwdInit) {
+        cwdInit=true;
+        wchar_t *_cwd=_wgetcwd(NULL, 1);
+        if (_cwd) {
+            std::wstring s=_cwd;
+            bool isAbsolute;
+            cwd=ConvertToUNC(s, isAbsolute);
+            int l;
+            if ((l=cwd.length())>0 && (cwd.substr(l-1, 1).compare(L"\\")!=0))
+                cwd += L"\\";
+        }
+    }
+    // Convet path to UNC, add current UNC path if user path is not full path
+    bool pathIsAbsolute;
+    std::wstring fpath=ConvertToUNC(utow(path),pathIsAbsolute);
+
+    std::wstring sfilename2;
+    if (pathIsAbsolute==true) sfilename2=fpath;
+    else if (path[0]=='.' && (path[1]=='/' || path[1]=='\\'))  sfilename2=cwd+utow(path+2);
+    else sfilename2=cwd+utow(path);
+
+    if (lastUNCpath) {
+        free(lastUNCpath);
+        lastUNCpath=NULL;
+    }
+    lastUNCpath=(wchar_t*)malloc((sfilename2.length() + 1) * sizeof(wchar_t));
+    if (!lastUNCpath) throw std::bad_alloc();
+    lstrcpy(lastUNCpath, sfilename2.c_str());
+    return lastUNCpath;
+}
+
 // Insert external filename (UTF-8 with "/") into dt if selected
 // by files, onlyfiles, and notfiles. If filename
 // is a directory then also insert its contents.
@@ -1779,11 +1853,12 @@ void Jidac::scandir(string filename) {
   WIN32_FIND_DATA ffd;
   string t=filename;
   if (t.size()>0 && t[t.size()-1]=='/') t+="*";
-  HANDLE h=FindFirstFile(utow(t.c_str()).c_str(), &ffd);
+  wchar_t* tUnc=Get_UNC_Path(t.c_str());
+  HANDLE h=FindFirstFile(tUnc, &ffd);
   if (h==INVALID_HANDLE_VALUE
       && GetLastError()!=ERROR_FILE_NOT_FOUND
       && GetLastError()!=ERROR_PATH_NOT_FOUND)
-    printerr(t.c_str());
+    printerr(wtou(tUnc).c_str());
   while (h!=INVALID_HANDLE_VALUE) {
 
     // For each file, get name, date, size, attributes
@@ -2310,7 +2385,11 @@ int Jidac::add() {
         printUTF8(p->first.c_str());
         printf(" %1.0f\n", p->second.size+0.0);
       }
+#ifdef unix
       FP in=fopen(p->first.c_str(), RB);
+#else
+      FP in=fopen(wtou(Get_UNC_Path(p->first.c_str())).c_str(), RB);
+#endif      
       if (in==FPNULL) {
         printerr(p->first.c_str());
         total_size-=p->second.size;
@@ -2394,6 +2473,7 @@ int Jidac::add() {
   unsigned char o1prev[ON*256]={0};  // last ON order 1 predictions
   libzpaq::Array<char> fragbuf(MAX_FRAGMENT);
   vector<unsigned> blocklist;  // list of starting fragments
+  std::string pext="",ext="";
 
   // For each file to be added
   for (unsigned fi=0; fi<=vf.size(); ++fi) {
@@ -2402,14 +2482,19 @@ int Jidac::add() {
     char buf[BUFSIZE];
     int bufptr=0, buflen=0;  // read pointer and limit
     int64_t infSize = 0;
-    std::string ext="";
+    pext=ext;
+    ext="";
     if (fi<vf.size()) {
       assert(vf[fi]->second.ptr.size()==0);
       DTMap::iterator p=vf[fi];
 
       // Open input file
       bufptr=buflen=0;
+#ifdef unix
       in=fopen(p->first.c_str(), RB);
+#else
+      in=fopen(wtou(Get_UNC_Path(p->first.c_str())).c_str(), RB);
+#endif
       if (in==FPNULL) {  // skip if not found
         p->second.date=0;
         total_size-=p->second.size;
@@ -2431,7 +2516,7 @@ int Jidac::add() {
     info=imbWidth;
     pfState=IM_NONE,imbWidth=0;
     bool isFBMP=ext==".bmp";
-    bool isFJPG=ext==".jpg";
+    bool isFJPG=ext==".jpg" || ext==".jpeg";
     bool isFBPM=(ext==".pgm" || ext==".pbm" || ext==".ppm");
     for (unsigned fj=0; true; ++fj) {
       int64_t sz=0;  // fragment size;
@@ -2542,11 +2627,16 @@ int Jidac::add() {
               else if (wi && hi && li==255 && pfState==IM24_PPM) imbWidth=wi*3,pfData=wi*3*hi+i+1;
               else pfState=IM_NONE;
           }
-          else if (level>2 && isFJPG==true && bufptr==0 && buflen==BUFSIZE && pfState==IM_NONE) {
-              // content not tested
-              pfState=IM_JPG;
-              pfData=infSize;
-              imbWidth=1; // fake, to keep all jpeg files in same block
+          else if (level>2 && isFJPG==true && bufptr==0 && buflen<=BUFSIZE && buflen>512 && pfState==IM_NONE) {
+              if (buf[0]==0xFF && buf[0]==0xD8 && buf[0]==0xFF && buf[0]==0xE0) {
+                  pfState=IM_JPG;
+                  pfData=infSize;
+                  imbWidth=1; // fake, to keep all jpeg files in same block
+              } else {
+                  pfState=IM_NONE;
+                  pfData=0;
+                  imbWidth=0;
+              }
           }
           
           // process fragment
@@ -2640,11 +2730,13 @@ int Jidac::add() {
           //if (newsize>=blocksize) newblock=true;  // won't fit?
         }
         if (sb.size()+sz+80+frags*4>=blocksize) newblock=true; // full?
+        
         if (fi==vf.size()) newblock=true;  // last file?
-        if (frags<1) newblock=false;  // block is empty?
         // foce new block before and after BMP image
-        if (isBMP &&  fsize==0 && (imbWidth!=info  || (imbWidth/3)>1024)) newblock = true; // file was BMP
-        else if (sb.size()>0 && pfData && fsize==0 && (imbWidth!=info  || (imbWidth/3)>1024)) newblock = true; // insert first BMP fragment
+        if (isBMP &&  fsize==0 && (imbWidth!=info || (imbWidth/3)>1024)) newblock = true; // file was BMP
+        else if (sb.size()>0 && pfData && fsize==0 && (imbWidth!=info || (imbWidth/3)>1024)) newblock = true; // insert first BMP fragment
+        if (isFJPG==false && fsize==0 && pext==".jpg") newblock=true;
+        if (frags<1) newblock=false;  // block is empty?
         // Pad sb with fragment size list, then compress
         if (newblock) {
           assert(frags>0);
@@ -2716,7 +2808,10 @@ int Jidac::add() {
         DTMap::iterator a=dt.find(newname);
         if (a==dt.end() || a->second.date==0) printf("+ ");
         else printf("# ");
-        printUTF8(p->first.c_str());
+        std::string shortfname=p->first;
+        if (p->first.length()>75)
+         shortfname="|.."+p->first.substr( p->first.length() - 73, 75 );
+        printUTF8(shortfname.c_str());
         if (newname!=p->first) {
           printf(" -> ");
           printUTF8(newname.c_str());
@@ -2898,7 +2993,11 @@ bool Jidac::equal(DTMap::const_iterator p, const char* filename) {
     return exists(filename);
 
   // compare sizes
-  FP in=fopen(filename, RB);
+#ifdef unix
+      FP in=fopen(filename, RB); 
+#else
+      FP in=fopen(wtou(Get_UNC_Path(filename)).c_str(), RB);
+#endif
   if (in==FPNULL) return false;
   fseeko(in, 0, SEEK_END);
   if (ftello(in)!=p->second.size) return fclose(in), false;
@@ -3133,7 +3232,11 @@ ThreadReturn decompressThread(void* arg) {
               release(job.mutex);
             }
             if (!job.jd.dotest) {
+#ifdef unix
               job.outf=fopen(filename.c_str(), WB);
+#else
+              job.outf=fopen(wtou(Get_UNC_Path(filename.c_str())).c_str(), WB); 
+#endif
               if (job.outf==FPNULL) {
                 lock(job.mutex);
                 printerr(filename.c_str());
@@ -3149,8 +3252,14 @@ ThreadReturn decompressThread(void* arg) {
 #endif
             }
           }
-          else if (!job.jd.dotest)
-            job.outf=fopen(filename.c_str(), RBPLUS);  // update existing file
+          else if (!job.jd.dotest) {
+#ifdef unix
+           job.outf=fopen(filename.c_str(), RBPLUS);  // update existing file
+#else
+           job.outf=fopen(wtou(Get_UNC_Path(filename.c_str())).c_str(), RBPLUS);
+#endif 
+          }
+       
           if (!job.jd.dotest && job.outf==FPNULL) break;  // skip errors
           job.lastdt=p;
           assert(job.jd.dotest || job.outf!=FPNULL);
@@ -3374,7 +3483,7 @@ int Jidac::extract() {
         close(fn.c_str(), p->second.date, p->second.attr);
         ++skipped;
       }
-      else if (!repack && !dotest && !force && exists(fn)) {  // exists, skip
+      else if (!repack && !dotest && !force && exists(wtou(Get_UNC_Path(fn.c_str())).c_str())) {  // exists, skip
         if (summary<=0) {
           printf("? ");
           printUTF8(fn.c_str());
@@ -3575,7 +3684,7 @@ int Jidac::extract() {
                 }
                 if (!dotest) {
                   makepath(outname);
-                  outf=fopen(outname.c_str(), WB);
+                  outf=fopen(outname.c_str(), WB); //
                   if (outf==FPNULL) printerr(outname.c_str());
                 }
                 release(job.mutex);
@@ -3892,7 +4001,7 @@ int main() {
     errorcode=2;
   }
   fflush(stdout);
-  fprintf(stderr, "%1.3f seconds %s\n", (mtime()-global_start)/1000.0,
+  fprintf(errorcode>0?stderr:stdout, "%1.3f seconds %s\n", (mtime()-global_start)/1000.0,
       errorcode>1 ? "(with errors)" :
       errorcode>0 ? "(with warnings)" : "(all OK)");
   return errorcode;
