@@ -8140,8 +8140,10 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
         method+=",c0.0.7."+itos(info-2+1000)+".255";
       else if (special==IM4_BMP) // 4 bit
         method+=",c0.0.15."+itos(info-2+1000)+".255";
-      //else if (special==IM_JPG)
-      //  method+=",c0.0.7.255i2,1m";
+      else if (special==IM_JPG)
+        method+=",c0.0.15.255i2n1,1,0,1,0";
+        else if (special==IM_AVI)
+          method+=",c0.0.15.255i2n1,1,0,1,0";//n0,1,0,1,0
       else if (type<21)  // store if not compressible 20?
         method+=",0";
       else if (type<48)  // fast LZ77 if barely compressible
@@ -8203,7 +8205,9 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       } else if (special==IM32_BMP)   // 32 bit
         method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16,24,255,3";
       else if (special==IM_JPG)
-        method+=",c0.0.7.255i2,1m"; //"c0.0.7.255i2,1s16,18,63";
+        method+=",c0.0.15.255i2,1n1,1,0,1,0"; //n0,1,0,1,0"c0.0.7.255i2,1s16,18,63";
+        else if (special==IM_AVI)
+          method+=",c0.0.15.255i2,1n1,1,0,1,0";//n0,1,0,1,0
       else if (type<20)
         method+=",0";
       else if (type<24)
@@ -8304,7 +8308,6 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       }
        
     }
-
     // Slow CM with lots of models
     else {  // 5..9
       if (special==IM24_BMP) 
@@ -8325,6 +8328,8 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
           method+=",c0.0.7.255i2,1s16,18,63"; //am
       else if (type<9) // store if not compressible
           method+=",0";
+      else if (special==IM_AVI)
+          method+=",c0.0.31.511i2,1ams16,18,63";
       else if (type&1) {
           // Test for brackets
           int br[256]={0};
@@ -8408,7 +8413,6 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       }
     }
   }
-
   // Compress
   std::string config;
   int args[9]={0};

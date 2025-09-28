@@ -1,3 +1,5 @@
+This is a fork of zpaq v.7.15. Please refer to the doc to see the differences.
+
 zpaq715.zip, Aug. 17, 2016.
 
 zpaq is a journaling archiver optimized for user-level incremental

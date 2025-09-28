@@ -6,15 +6,17 @@ zpaqf v7.15.5f, 20.09.2025
 
 zpaqf detects 1, 4, 8, 24, 32 bit bmp images and 1 bit pbm, 8 bit pgm, 24 ppm images. 
 Following types are used for special image models:
-IM1_PBM, IM8_PGM, IM24_PPM, IM1_BMP, IM4_BMP, IM8_BMP, IM24_BMP, IM32_BMP, IM_JPG
+IM1_PBM, IM8_PGM, IM24_PPM, IM1_BMP, IM4_BMP, IM8_BMP, IM24_BMP, IM32_BMP, IM_JPG, IM_AVI
 
 If file extension matches to .bmp, .pbm, .pgm, .ppm then image header is tested for valid header.
 Images with byte width lower than 1024 are in solid block assuming that they have the same width, otherwise each image is in individual block.
 In method 5 images with bit depth 8, 24 have special models that parse the file header to find the width. Otherwise, the byte width of the image is transmitted along with the block information.    
 Method 5 also has a special model for text.    
 
-On Windows Universal naming convention (UNC) paths are used by default when accessing files (a=add, x=extract). To extract with older versions of zpaq ```-to``` command line option needs to be used. By renaming long paths to shorter version files can be extracted, but not into the original path. If command line option ```-to``` is not used then program prints an error message: ```path not found```    
-For zpaqfranz when extracting files with long path use command: ```e myarchive.zpaq -longpath```    
+On Windows Universal naming convention (UNC) paths are used by default when accessing files (a=add, x=extract). To extract with older (v7.15/v7.15.4f) versions of zpaq(f) ```-to``` command line option needs to be used. By renaming long paths to shorter version files can be extracted, but not into the original path. If command line option ```-to``` is not used then program prints an error message: ```path not found```    
+For zpaqfranz, when extracting files with long path, use command: ```e myarchive.zpaq -longpath```   
+
+When extracting files larger than 32MB use sparse file mode. 
 
 ### Mixer
 Has a two new parameters. Before default values for mixer was ```m8,24``` now ```m8,24,0,0```.    
@@ -51,7 +53,8 @@ IM1_PBM, IM1_BMP: ```-method x0,c0.0.7.K.255``` (where J=byte width, K=J-1+999)
 IM4_BMP: ```-method x0,0c0.0.15.K.255``` (where J=byte width, K=J-1+999)    
 IM8_PGM, IM8_BMP, IM24_PPM, IM24_BMP: ```-method x0,c0.0.255.K.255n1,8,0,0,1n1,8,0,3,1Mm``` (where J=byte width, K=J-1+999, if multiple files in blok M=a192)    
 IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (where J=byte width, K=J-1+999)     
-IM_JPG: ```-method x0,c0.0.7.255i2,1m```     
+IM_JPG: ```-method x0,c0.0.15.255i2n1,1,0,1,0```     
+IM_AVI: ```-method x0,c0.0.15.255i2n1,1,0,1,0```     
 
 0..5: ```-method x0,0``` (no compression).    
 6..11: ```-method x6,1.4.0.3.25``` (fast LZ77).    
@@ -67,7 +70,8 @@ IM4_BMP: ```-method x0,c0.0.15.K.255i2n0,4,0,1,0m16,10``` (where J=byte width, K
 IM8_PGM, IM8_BMP: ```-method x0,c0.0.255.K.255c0.0.255.L.255t8s16,20,255,M``` (where J=byte width, K=J-1+999, L=J*2-1+999, M=J-2)     
 IM24_PPM, IM24_BMP: ```-method x0,c0.3.255i2c0.0.511.K.255n1,8,0,3,1Mm11,24,3``` (where J=byte width, K=J-1+999, if multiple files in blok M=a192)     
 IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (where J=byte width, K=J-1+999)     
-IM_JPG: ```-method x0,c0.0.7.255i2,1s16,18,63```     
+IM_JPG: ```-method x0,c0.0.15.255i2,1n1,1,0,1,0```     
+IM_AVI: ```-method x0,c0.0.15.255i2,1n1,1,0,1,0```     
 
 0..4: ```-method x0,0``` (no compression).    
 5..5: ```-method x6,1.4.0.3.25``` (fast LZ77)    
@@ -91,6 +95,7 @@ IM24_PPM: ```-method x0,9```
 IM24_BMP: ```-method x0,8```     
 IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (where J=byte width, K=J-1+999)     
 IM_JPG: ```-method x0,c0.0.7.255i2,1s16,18,63```     
+IM_AVI: ```-method x0,c0.0.31.511i2,1ams16,18,63```     
 
 0..2: ```-method x0,0``` (no compression)    
 3..255 and text with brackets: ```-method x0,10,1```    

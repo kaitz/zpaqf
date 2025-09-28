@@ -534,74 +534,74 @@ void printerr(const char* filename) {
 #endif
 
 // Global
-wchar_t* lastUNCpath = NULL;
-std::wstring cwd;    // last Current Working Directory (constant in application scope)
-bool cwdInit = false;
+std::string lastUNCpath;
+std::string cwd;    // last Current Working Directory
+std::string lastDL; 
+bool cwdInit=false;
+bool fsSparseSupport=false;
 
 // Lazy testing whether a local path / network path are absolute ("X:\" or "\\server\share")
-bool PathIsAbsolute(const wchar_t* path) {
-    return ((lstrlenW(path)>=2) &&
+bool IsPathIsAbsolute(const std::string &path) {
+    return (path.size()>=2 &&
         ((path[1]==':') ||                    // local path
         ((path[0]=='\\') && (path[1]=='\\'))  // network path
         ));
 }
 
-std::wstring ConvertToUNC(const std::wstring path, bool &isAbsolute) {
-    bool isUNC;
-    std::wstring uncPrefix, sfilename2 = path;
-    isUNC=sfilename2.substr(0, 2).compare(L"\\\\?\\")==0;
+std::string GetUNC(const std::string path, bool &isAbsolute,bool &isNetwork) {
+    std::string uncPrefix, sFullFilePath=path;
+    bool isUNC=sFullFilePath.substr(0, 2).compare("\\\\?\\")==0;
     if (!isUNC) {
-        bool isNetwork=sfilename2.length()>2 && sfilename2.substr(0, 2).compare(L"\\\\")==0;
-        isAbsolute=isNetwork || PathIsAbsolute(sfilename2.c_str());
-        uncPrefix=isNetwork?L"\\\\?\\UNC":isAbsolute?L"\\\\?\\":L"";
+        isNetwork=sFullFilePath.length()>2 && sFullFilePath.substr(0, 2).compare("\\\\")==0;
+        isAbsolute=isNetwork || IsPathIsAbsolute(sFullFilePath.c_str());
+        uncPrefix=isNetwork?"\\\\?\\UNC":isAbsolute?"\\\\?\\":"";
         isUNC=uncPrefix.length()>0;
         if (isNetwork)
-            sfilename2=sfilename2.substr(1, sfilename2.length() - 1);
+            sFullFilePath=sFullFilePath.substr(1, sFullFilePath.length()-1);
         if (isUNC)
-            sfilename2=uncPrefix+sfilename2;
+            sFullFilePath=uncPrefix+sFullFilePath;
     }
     if (isUNC) { // UNC paths don't accept "/" instead of "\\"
-        while (true) {
-            size_t p=sfilename2.find(L"/");
-            if (p==string::npos) break;
-            sfilename2.replace(p, 2, L"\\");
-        }
+        std::replace(sFullFilePath.begin(), sFullFilePath.end(), '/', '\\');
     }
-    return sfilename2;
+    return sFullFilePath;
 }
 
 // On first access init current UNC path.
 // Add current UNC path to use path if needed
-wchar_t* Get_UNC_Path(const char* path) {
-    // Init current path as UNC
+std::string &Get_UNC_Path(const char* path) {
     if (!cwdInit) {
         cwdInit=true;
         wchar_t *_cwd=_wgetcwd(NULL, 1);
         if (_cwd) {
             std::wstring s=_cwd;
-            bool isAbsolute;
-            cwd=ConvertToUNC(s, isAbsolute);
+            std::string rs=wtou(s.c_str());
+            bool isAbsolute=false, isNetwork=false;
+            cwd=GetUNC(rs, isAbsolute, isNetwork);
             int l;
-            if ((l=cwd.length())>0 && (cwd.substr(l-1, 1).compare(L"\\")!=0))
-                cwd += L"\\";
+            if ((l=cwd.length())>0 && (cwd.substr(l-1, 1).compare("\\")!=0))
+                cwd += "\\";
         }
     }
     // Convet path to UNC, add current UNC path if user path is not full path
     bool pathIsAbsolute;
-    std::wstring fpath=ConvertToUNC(utow(path),pathIsAbsolute);
+    bool pathIsNetwork;
+    std::string inpath=path;
+    std::string fpath=GetUNC(inpath, pathIsAbsolute, pathIsNetwork);
 
-    std::wstring sfilename2;
-    if (pathIsAbsolute==true) sfilename2=fpath;
-    else if (path[0]=='.' && (path[1]=='/' || path[1]=='\\'))  sfilename2=cwd+utow(path+2);
-    else sfilename2=cwd+utow(path);
+    if (pathIsAbsolute==true) lastUNCpath=fpath;
+    else if (inpath.size()>=2 && path[0]=='.' && (path[1]=='/' || path[1]=='\\')) lastUNCpath=cwd+(path+2);
+    else lastUNCpath=cwd+(path);
 
-    if (lastUNCpath) {
-        free(lastUNCpath);
-        lastUNCpath=NULL;
+    // Look for sparse file support for local path
+    if (pathIsNetwork==false && lastDL!=lastUNCpath.substr(4,1) && lastUNCpath.substr(5,1)==":") {
+        lastDL=lastUNCpath.substr(4,1);
+        LPCTSTR lpRootPath=utow(lastUNCpath.substr(4,3).c_str()).c_str();
+        DWORD dwFlags=0;
+        GetVolumeInformation(lpRootPath, NULL, MAX_PATH, NULL, NULL, &dwFlags, NULL, MAX_PATH);
+        fsSparseSupport=false;
+        if (dwFlags&FILE_SUPPORTS_SPARSE_FILES) fsSparseSupport=true;
     }
-    lastUNCpath=(wchar_t*)malloc((sfilename2.length() + 1) * sizeof(wchar_t));
-    if (!lastUNCpath) throw std::bad_alloc();
-    lstrcpy(lastUNCpath, sfilename2.c_str());
     return lastUNCpath;
 }
 
@@ -620,9 +620,10 @@ void close(const char* filename, int64_t date, int64_t attr, FP fp=FPNULL) {
     chmod(filename, attr>>8);
 #else
   const bool ads=strstr(filename, ":$DATA")!=0;  // alternate data stream?
+  std::wstring infile=utow(Get_UNC_Path(filename).c_str()).c_str();
   if (date>0 && !ads) {
     if (fp==FPNULL)
-      fp=CreateFile(Get_UNC_Path(filename),
+      fp=CreateFile(infile.c_str(),
                     FILE_WRITE_ATTRIBUTES,
                     FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
                     NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
@@ -643,7 +644,7 @@ void close(const char* filename, int64_t date, int64_t attr, FP fp=FPNULL) {
   }
   if (fp!=FPNULL) CloseHandle(fp);
   if ((attr&255)=='w' && !ads)
-    SetFileAttributes(Get_UNC_Path(filename), attr>>8);
+    SetFileAttributes(infile.c_str(), attr>>8);
 #endif
 }
 
@@ -664,7 +665,8 @@ void makepath(string path, int64_t date=0, int64_t attr=0) {
 #ifdef unix
       mkdir(path.c_str(), 0777);
 #else
-      CreateDirectory(Get_UNC_Path(path.c_str()), 0);
+      std::wstring infile=utow(Get_UNC_Path(path.c_str()).c_str()).c_str();
+      CreateDirectory(infile.c_str(), 0);
 #endif
       path[i]='/';
     }
@@ -1855,12 +1857,12 @@ void Jidac::scandir(string filename) {
   WIN32_FIND_DATA ffd;
   string t=filename;
   if (t.size()>0 && t[t.size()-1]=='/') t+="*";
-  wchar_t* tUnc=Get_UNC_Path(t.c_str());
-  HANDLE h=FindFirstFile(tUnc, &ffd);
+  std::wstring fullpath=utow(Get_UNC_Path(t.c_str()).c_str()).c_str();
+  HANDLE h=FindFirstFile(fullpath.c_str(), &ffd);
   if (h==INVALID_HANDLE_VALUE
       && GetLastError()!=ERROR_FILE_NOT_FOUND
       && GetLastError()!=ERROR_PATH_NOT_FOUND)
-    printerr(wtou(tUnc).c_str());
+    printerr(t.c_str());
   while (h!=INVALID_HANDLE_VALUE) {
 
     // For each file, get name, date, size, attributes
@@ -2390,7 +2392,7 @@ int Jidac::add() {
 #ifdef unix
       FP in=fopen(p->first.c_str(), RB);
 #else
-      FP in=fopen(wtou(Get_UNC_Path(p->first.c_str())).c_str(), RB);
+      FP in=fopen(Get_UNC_Path(p->first.c_str()).c_str(), RB);
 #endif      
       if (in==FPNULL) {
         printerr(p->first.c_str());
@@ -2495,7 +2497,7 @@ int Jidac::add() {
 #ifdef unix
       in=fopen(p->first.c_str(), RB);
 #else
-      in=fopen(wtou(Get_UNC_Path(p->first.c_str())).c_str(), RB);
+      in=fopen(Get_UNC_Path(p->first.c_str()).c_str(), RB);
 #endif
       if (in==FPNULL) {  // skip if not found
         p->second.date=0;
@@ -2518,7 +2520,8 @@ int Jidac::add() {
     info=imbWidth;
     pfState=IM_NONE,imbWidth=0;
     bool isFBMP=ext==".bmp";
-    bool isFJPG=ext==".jpg" || ext==".jpeg";
+    bool isFJPG=(ext==".jpg" || ext=="jpeg");
+    bool isFMKV=ext==".mkv"|| ext==".avi";
     bool isFBPM=(ext==".pgm" || ext==".pbm" || ext==".ppm");
     for (unsigned fj=0; true; ++fj) {
       int64_t sz=0;  // fragment size;
@@ -2535,9 +2538,10 @@ int Jidac::add() {
         while (true) {
           if (bufptr>=buflen) bufptr=0, buflen=fread(buf, 1, BUFSIZE, in);
           // detect BMP 1,4,8,24 bit at level 3 and up
-          if (level>2 && isFBMP==true && bufptr==0 && buflen==BUFSIZE && pfState==IM_NONE) {
+          if (level>2 && bufptr==0 && pfState==IM_NONE) {
+           if (isFBMP==true && buflen==BUFSIZE) {
               zpBMFILEHEADER &bmHdr=(zpBMFILEHEADER&)buf;
-             zpBMOSFILEHEADER &bmHdr1=(zpBMOSFILEHEADER&)buf;
+              zpBMOSFILEHEADER &bmHdr1=(zpBMOSFILEHEADER&)buf;
               if (bmHdr.bfType==0x4d42 && bmHdr.bfSize==infSize && blocksize>bmHdr.bfSize && bmHdr.bfSize>16 &&
                   (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078|| bmHdr.bfOffBits==26|| bmHdr.bfOffBits==794 || bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved==0) {
                   if (bmHdr.bfOffBits!=26 && bmHdr.biWidth<0xffff && bmHdr.biWidth>16  && bmHdr.biCompression==0 && bmHdr.biPlanes==1) {
@@ -2545,7 +2549,7 @@ int Jidac::add() {
                           pfState=IM24_BMP;
                           pfData=bmHdr.bfSize;
                           imbWidth=((bmHdr.biWidth*3)+3)&-4;
-                      } else if (bmHdr.biBitCount==8 && bmHdr.bfOffBits==1078 ) {
+                      } else if (bmHdr.biBitCount==8 && bmHdr.bfOffBits==1078) {
                           pfState=IM8_BMP;
                           pfData=bmHdr.bfSize;
                           imbWidth=(bmHdr.biWidth+3)&-4;
@@ -2557,25 +2561,25 @@ int Jidac::add() {
                           pfState=IM4_BMP;
                           pfData=bmHdr.bfSize;
                           imbWidth=((bmHdr.biWidth*4+31)>>5)*4;
-                      }else if (bmHdr.biBitCount==32 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER)&& bmHdr.biWidth>16) {
+                      } else if (bmHdr.biBitCount==32 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER)&& bmHdr.biWidth>16) {
                           pfState=IM32_BMP;
                           pfData=bmHdr.bfSize;
                           imbWidth=bmHdr.biWidth*4;
                       }
                   // OS/2
-                  }else if  (bmHdr.bfOffBits==26 && bmHdr1.biBitCount==24 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>16 &&  bmHdr1.biPlanes==1){
+                  } else if (bmHdr.bfOffBits==26 && bmHdr1.biBitCount==24 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>16 && bmHdr1.biPlanes==1) {
                       pfState=IM24_BMP;
-                          pfData=bmHdr1.bfSize;
-                          imbWidth=bmHdr1.biWidth*3;
-                  }else if  (bmHdr.bfOffBits==794 && bmHdr1.biBitCount==8 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>16 &&  bmHdr1.biPlanes==1){
+                      pfData=bmHdr1.bfSize;
+                      imbWidth=bmHdr1.biWidth*3;
+                  } else if (bmHdr.bfOffBits==794 && bmHdr1.biBitCount==8 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>16 && bmHdr1.biPlanes==1) {
                       pfState=IM8_BMP;
-                          pfData=bmHdr1.bfSize;
-                          imbWidth=bmHdr1.biWidth;
+                      pfData=bmHdr1.bfSize;
+                      imbWidth=bmHdr1.biWidth;
                   }
               }
           }
           // multiline pgm pbm ppm
-          else if (level>2 && isFBPM==true && bufptr==0 && buflen==BUFSIZE && pfState==IM_NONE) {
+          else if (isFBPM==true && buflen==BUFSIZE) {
               std::string hdr=std::string(&buf[0], 3);
               if (hdr=="P5\n") pfState=IM8_PGM;
               else if (hdr=="P6\n") pfState=IM24_PPM;
@@ -2628,9 +2632,8 @@ int Jidac::add() {
               else if (wi && hi && li==0 && pfState==IM1_PBM) imbWidth=(wi+7)/8,pfData=imbWidth*hi+i+1;
               else if (wi && hi && li==255 && pfState==IM24_PPM) imbWidth=wi*3,pfData=wi*3*hi+i+1;
               else pfState=IM_NONE;
-          }
-          else if (level>2 && isFJPG==true && bufptr==0 && buflen<=BUFSIZE && buflen>512 && pfState==IM_NONE) {
-              if ((unsigned char)buf[0]==0xFF && (unsigned char)buf[1]==0xD8 && (unsigned char)buf[2]==0xFF && (unsigned char)buf[3]==0xE0) {
+          } else if (isFJPG==true && buflen<=BUFSIZE && buflen>512) {
+              if ((unsigned char)buf[0]==0xFF && (unsigned char)buf[1]==0xD8 && (unsigned char)buf[2]==0xFF && (unsigned char)(buf[3]&0xf0)==0xE0) {
                   pfState=IM_JPG;
                   pfData=infSize;
                   imbWidth=1; // fake, to keep all jpeg files in same block
@@ -2639,6 +2642,20 @@ int Jidac::add() {
                   pfData=0;
                   imbWidth=0;
               }
+          } else if (isFMKV==true && buflen<=BUFSIZE && buflen>512) { //avi mov jpeg mp4 mkv?
+              if ((unsigned char)buf[0]==0x52 && (unsigned char)buf[1]==0x49 && (unsigned char)buf[2]==0x46 && (unsigned char)buf[3]==0x46 && //RIFF
+                   (unsigned char)buf[112]==0x6d && (unsigned char)buf[113]==0x6a && (unsigned char)buf[114]==0x70 && (unsigned char)buf[115]==0x67  ) { //mjpg
+                  pfState=IM_AVI;
+                  pfData=infSize;
+                  imbWidth=1; // fake, to keep all jpeg files in same block
+              } else {
+                  pfState=IM_NONE;
+                  pfData=0;
+                  imbWidth=0;
+              }
+          }
+              // Force new type if present
+              if (frags<1 && pfState!=IM_NONE) info=imbWidth, isBMP=pfState;
           }
           
           // process fragment
@@ -2719,7 +2736,7 @@ int Jidac::add() {
         // the start of a file that won't fit or doesn't share mutual
         // information with the current block, or last file.
         bool newblock=false;
-        if (frags>0 && fj==0 && fi<vf.size()) {
+        if (frags>0 && fj==0 && fi<vf.size() && pfData==0) {
           const int64_t esize=vf[fi]->second.size;
           const int64_t newsize=sb.size()+esize+(esize>>14)+4096+frags*4;
           if (newsize>blocksize/4 && redundancy<sb.size()/128) newblock=true;
@@ -2732,12 +2749,14 @@ int Jidac::add() {
           //if (newsize>=blocksize) newblock=true;  // won't fit?
         }
         if (sb.size()+sz+80+frags*4>=blocksize) newblock=true; // full?
-
         if (fi==vf.size()) newblock=true;  // last file?
         // foce new block before and after BMP image
-        if (isBMP &&  fsize==0 && (imbWidth!=info || (imbWidth/3)>1024)) newblock = true; // file was BMP
-        else if (sb.size()>0 && pfData && fsize==0 && (imbWidth!=info || (imbWidth/3)>1024)) newblock = true; // insert first BMP fragment
-        if (isFJPG==false && fsize==0 && pext==".jpg") newblock=true;
+        if (fsize==0) {
+            if (isBMP && (imbWidth!=info || (imbWidth/3)>1024)) newblock=true; // file was BMP
+            else if (pfData && sb.size()>0 && (imbWidth!=info || (imbWidth/3)>1024)) newblock=true; // insert first BMP fragment
+            else if (level>2 && isFJPG==false && pext==".jpg") newblock=true;
+            else if (level>2 && isFMKV==false && (pext==".mkv" || pext==".avi")) newblock=true;
+        }
         if (frags<1) newblock=false;  // block is empty?
         // Pad sb with fragment size list, then compress
         if (newblock) {
@@ -2750,7 +2769,7 @@ int Jidac::add() {
           string m=method;
           if (isdigit(method[0]))
             m+=","+itos(redundancy/(sb.size()/256+1))
-                 +","+itos((exe>frags)*2+(text>frags)+(files>1)*4)+"," +itos(isBMP)+"," + itos(info);
+                 +","+itos((exe>frags)*2+(text>frags)+(files>1)*4)+"," +itos(isBMP)+"," + itos(info+(info==0?(exe>255?255:exe)*255+(text>255?255:text):0));
           string fn="jDC"+itos(date, 14)+"d"+itos(ht.size()-frags, 10);
           print_progress(total_size, total_done, summary);
           if (summary<=0)
@@ -2765,9 +2784,7 @@ int Jidac::add() {
           }
           assert(sb.size()==0);
           blocklist.push_back(ht.size()-frags);  // mark block start
-          if (isBMP==IM_NONE && pfState==IM_NONE || isBMP==IM_JPG && pfState==IM_NONE) pfData = 0;
           frags=redundancy=text=exe=files=0;
-          imbWidth=pfState==IM_NONE?0:imbWidth;
           memset(o1prev, 0, sizeof(o1prev));
         }
         // Append fragbuf to sb and update block statistics
@@ -2796,7 +2813,7 @@ int Jidac::add() {
       if (c == EOF) {
           files++;
           // reset BMP if deduplicated
-          if (pfState && fsize != pfData) pfState=IM_NONE/*, imbWidth=0*/;
+          if (pfState && fsize != pfData && fsize!=0 ) pfState=IM_NONE;
           break;
       }
     }  // end for each fragment fj
@@ -2998,7 +3015,7 @@ bool Jidac::equal(DTMap::const_iterator p, const char* filename) {
 #ifdef unix
       FP in=fopen(filename, RB); 
 #else
-      FP in=fopen(wtou(Get_UNC_Path(filename)).c_str(), RB);
+      FP in=fopen(Get_UNC_Path(filename).c_str(), RB);
 #endif
   if (in==FPNULL) return false;
   fseeko(in, 0, SEEK_END);
@@ -3237,7 +3254,7 @@ ThreadReturn decompressThread(void* arg) {
 #ifdef unix
               job.outf=fopen(filename.c_str(), WB);
 #else
-              job.outf=fopen(wtou(Get_UNC_Path(filename.c_str())).c_str(), WB); 
+              job.outf=fopen(Get_UNC_Path(filename.c_str()).c_str(), WB); 
 #endif
               if (job.outf==FPNULL) {
                 lock(job.mutex);
@@ -3249,7 +3266,12 @@ ThreadReturn decompressThread(void* arg) {
                 DWORD br=0;
                 if (!DeviceIoControl(job.outf, FSCTL_SET_SPARSE,
                     NULL, 0, NULL, 0, &br, NULL))  // set sparse attribute
-                  printerr(filename.c_str());
+                   printerr(filename.c_str());
+              }
+              else if (fsSparseSupport==true && p->second.size>int64_t(1<<25)) {  // set sparse for files>32MB
+                DWORD br=0;
+                if (!DeviceIoControl(job.outf, FSCTL_SET_SPARSE, NULL, 0, NULL, 0, &br, NULL))  // set sparse attribute
+                    printerr(filename.c_str());
               }
 #endif
             }
@@ -3258,7 +3280,7 @@ ThreadReturn decompressThread(void* arg) {
 #ifdef unix
            job.outf=fopen(filename.c_str(), RBPLUS);  // update existing file
 #else
-           job.outf=fopen(wtou(Get_UNC_Path(filename.c_str())).c_str(), RBPLUS);
+           job.outf=fopen(Get_UNC_Path(filename.c_str()).c_str(), RBPLUS);
 #endif 
           }
        
@@ -3485,7 +3507,7 @@ int Jidac::extract() {
         close(fn.c_str(), p->second.date, p->second.attr);
         ++skipped;
       }
-      else if (!repack && !dotest && !force && exists(wtou(Get_UNC_Path(fn.c_str())).c_str())) {  // exists, skip
+      else if (!repack && !dotest && !force && exists(Get_UNC_Path(fn.c_str()).c_str())) {  // exists, skip
         if (summary<=0) {
           printf("? ");
           printUTF8(fn.c_str());
