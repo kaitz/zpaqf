@@ -1,26 +1,26 @@
 # zpaqf vs zpaq
 Kaido Orav    
-zpaqf v7.15.5f, 20.09.2025    
+zpaqf v7.15.6f, 20.12.2025    
 
 ### Differences between the zpaq (v7.15) and zpaqf (v7.15.5f) compression algorithm models.
 
 zpaqf detects 1, 4, 8, 24, 32 bit bmp images and 1 bit pbm, 8 bit pgm, 24 ppm images. 
-Following types are used for special image models:
+Following types are used for special image models:    
 IM1_PBM, IM8_PGM, IM24_PPM, IM1_BMP, IM4_BMP, IM8_BMP, IM24_BMP, IM32_BMP, IM_JPG, IM_AVI
 
-If file extension matches to .bmp, .pbm, .pgm, .ppm then image header is tested for valid header.
-Images with byte width lower than 1024 are in solid block assuming that they have the same width, otherwise each image is in individual block.
-In method 5 images with bit depth 8, 24 have special models that parse the file header to find the width. Otherwise, the byte width of the image is transmitted along with the block information.    
+If the file extension matches .bmp, .pbm, .pgm, or .ppm, then the image is checked for a valid header.
+Images with byte width lower than 1024 are in solid block, assuming that they have the same width, otherwise each image is in individual block.
+In method 5 images with bit depth 8 or 24 have special models that parse the file header to find the width. Otherwise, the byte width of the image is transmitted along with the block information.    
 Method 5 also has a special model for text.    
 
 On Windows Universal naming convention (UNC) paths are used by default when accessing files (a=add, x=extract). To extract with older (v7.15/v7.15.4f) versions of zpaq(f) ```-to``` command line option needs to be used. By renaming long paths to shorter version files can be extracted, but not into the original path. If command line option ```-to``` is not used then program prints an error message: ```path not found```    
 For zpaqfranz, when extracting files with long path, use command: ```e myarchive.zpaq -longpath```   
 
-When extracting files larger than 32MB use sparse file mode. 
+Use sparse file mode when unpacking files larger than 32 MB. This option is hardcoded and cannot be changed from the command line.    
 
 ### Mixer
-Has a two new parameters. Before default values for mixer was ```m8,24``` now ```m8,24,0,0```.    
-Last two parameters (N2, N3) selects how many upper bits (N3) of last byte are used as a context. Assuming that N0>8. If N3=1 then last byte is subtracted by 1.    
+There are two new parameters. Previously, the mixer default value was ```m8,24``` now ```m8,24,0,0```.    
+New parameters selects how many upper bits (N3) of last byte are used as a context. Assuming that N0>8. If N3=1 then last byte is subtracted by 1.    
 
 ### SSE - Secondary Symbol Estimator
 Has a new parameter. Before default values for SSE was ```s8,32,255``` now ```s8,32,255,0```.    
@@ -106,10 +106,10 @@ IM_AVI: ```-method x0,c0.0.31.511i2,1ams16,18,63```
 3..255 mid period (11-29): ```-method x3,0w1i1c256ciK,Jac0,0,L,255i1c0,Ji1mm16ts19t0``` (where J=period, K=J/2, L=J+999)    
 3..255 low period, high period(1-10,>30): ```-method x6,0w1i1c256ciJ,Kn,Lac0,0,Y,255i1c0,Wi1c0,0,M,255i1c0,Li1mm16ts19t0``` (where L=low period J=2, Kn=J+1, Kn=K(n-1)+1 ... while Kn<L-K(n-1), M=L+999; W=high period Y=W+999)    
 
-### Large models for different data types.
-
+### Large models for different data types
+#### 24 bit image model
 **-method x0,8 -method x0,9**    
-24 bit image model
+
 ```
 (24 bit bmp, ppm model)
 comp 17 17 0 3 20 (hh hm ph pm n)
@@ -262,8 +262,8 @@ ppm
     halt
 end
 ```
+#### 8 bit image model
 **-method x0,11 -method x0,12**    
-8 bit image model
 ```
 (8 bit bmp, pgm model)
 comp 17 17 0 3 19 (hh hm ph pm n)
@@ -395,9 +395,11 @@ contexts
     halt
 end
 ```
+#### Text model
 **-method x0,10,0 -method x0,10,1**    
-Text model    
-Last parameter in method selects bracket (1).
+Last parameter in method selects bracket (1). 
+Bracket is also enabled with method 5 when  ```log2(blocksize)/2 < (log2(opencount)+log2(closecount))/2```    
+The tested brackets are '([{<' for open and ')]}>' for close.    
 
 no brackets
 ```
