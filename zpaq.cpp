@@ -567,6 +567,19 @@ std::string GetUNC(const std::string path, bool &isAbsolute,bool &isNetwork) {
     return sFullFilePath;
 }
 
+#ifdef unix
+
+std::string &Get_UNC_Path(const char* path) {
+    // Using a simple Pass-Through given that:
+    //  Unix file systems natively handle paths that Windows requires UNC syntax for.
+    //  The application logic (Jidac::scandir) works correctly with relative paths.
+    //  Unix file systems handle sparse writes automatically.
+    lastUNCpath = path ? path : "";
+    return lastUNCpath;
+}
+
+#else
+
 // On first access init current UNC path.
 // Add current UNC path to use path if needed
 std::string &Get_UNC_Path(const char* path) {
@@ -604,6 +617,8 @@ std::string &Get_UNC_Path(const char* path) {
     }
     return lastUNCpath;
 }
+
+#endif
 
 // Close fp if open. Set date and attributes unless 0
 void close(const char* filename, int64_t date, int64_t attr, FP fp=FPNULL) {
