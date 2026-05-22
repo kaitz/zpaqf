@@ -7339,7 +7339,7 @@ class LZMA: public libzpaq::Reader {
   unsigned rpos, wpos;        // read, write pointers
   int level;
   unsigned dictSize;
-  unsigned inpos,outpos;
+  int lc,lp,pb,fb;
   
   void CompressLZMA();  // encode to buf
 
@@ -7375,8 +7375,13 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
     in(inbuf.data()),
     n(inbuf.size()),
     i(0),
-    rpos(0), wpos(0),level(args[2]),dictSize((1 <<lg((1 <<args[0])*1024*1024))/2) {
+    rpos(0), wpos(0),level(args[2]),dictSize((1 <<lg((1 <<args[0])*1024*1024))/2),
+    lc(args[3]),lp(args[4]),pb(args[5]),fb(args[6]) {
   assert(args[0]>=0);
+  assert(lc>=0  && lc<=8);
+  assert(lp>=0  && lp<=4);
+  assert(pb>=0  && pb<=4);
+  assert(fb>=5 && fb<=273);
   assert(n<=(1u<<20<<args[0]));
   if (dictSize<0x10000) dictSize=0x10000; // 64kb
   CompressLZMA();
@@ -7393,7 +7398,7 @@ void LZMA::CompressLZMA() {
     &outb[LZMA_PROPS_SIZE+8], &destLen,
     &in[0], n,
     &outb[0], &propsSize,
-    level, dictSize, -1, -1, -1, -1, -1);
+    level, dictSize, lc, lp, pb, fb, -1);
   
   assert(propsSize == LZMA_PROPS_SIZE);
   if (res == SZ_ERROR_MEM) error("LZMA - Memory allocation error");
@@ -7453,7 +7458,11 @@ std::string makeConfig(const char* method, int args[]) {
 
   if (lzma) {
       level=5;
-      if (args[2]>9 || args[2]<0) args[2]=5; // lzma level
+      if (args[2]>9 || args[2]<0) args[2]=5;    // lzma level
+      if (args[3]>9 || args[3]<0) args[3]=3;    // lc 0-8
+      if (args[4]>4 || args[4]<0) args[4]=0;    // lp 0-4
+      if (args[5]>4 || args[5]<0) args[5]=2;    // pb 0-4
+      if (args[6]>273 || args[6]<0) args[6]=32;  // fb 5-273
       hdr="comp 0 0 26 16 ";
       pcomp=
       "pcomp lzmab.bat c ; (c - ignored)\n"
@@ -9275,7 +9284,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       }
     }
 
-    // LZ77 with CM depending on redundancy
+    // LZMA, BWT+CM or CM depending on redundancy
     else if (level==3) {
       if (special==IM8_PGM || special==IM24_PPM || special==IM8_BMP|| special==IM24_BMP) // bmp 24, 8 bit, ppm, pgm
         method+=",c0.0.255."+itos(info-2+1000)+".255n1,8,0,0,1n1,8,0,3,1"+(files?"a192m":"");
@@ -9290,8 +9299,8 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
           method+=",c0.0.15.255i2n1,1,0,1,0";//n0,1,0,1,0
       else if (type<21)  // store if not compressible 20?
         method+=",0";
-      //else if (type<48)  // fast LZ77 if barely compressible
-      //  method+=","+itos(1+doe8)+",4,0,3"+htsz;
+      else if (type<48)  // faster LZMA if barely compressible
+         method+=",14,4";
       else if (type>=640 || (type&1)) {  // BWT if text or highly compressible
         int lowP=0;
         if ((type&1)==0) {
