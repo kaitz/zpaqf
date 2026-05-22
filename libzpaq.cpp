@@ -41,6 +41,8 @@ See libzpaq.h for additional documentation.
 #include <wincrypt.h>
 #endif
 
+#include "LzmaLib.h"
+
 namespace libzpaq {
 
 // Read 16 bit little-endian number
@@ -7240,6 +7242,173 @@ void WBPE::fill() {
   }
 }
 
+
+/*
+
+LZMA
+
+RAM requirements for LZMA:
+  for compression:   (dictSize * 11.5 + 6 MB) + state_size
+  for decompression: dictSize + state_size
+    state_size = (4 + (1.5 << (lc + lp))) KB
+    by default (lc=3, lp=0), state_size = 16 KB.
+
+LZMA properties (5 bytes) format
+    Offset Size  Description
+      0     1    lc, lp and pb in encoded form.
+      1     4    dictSize (little endian).
+
+LzmaCompress
+------------
+
+outPropsSize -
+     In:  the pointer to the size of outProps buffer; *outPropsSize = LZMA_PROPS_SIZE = 5.
+     Out: the pointer to the size of written properties in outProps buffer; *outPropsSize = LZMA_PROPS_SIZE = 5.
+
+  LZMA Encoder will use defult values for any parameter, if it is
+  -1  for any from: level, loc, lp, pb, fb, numThreads
+   0  for dictSize
+  
+level - compression level: 0 <= level <= 9;
+
+  level dictSize algo  fb
+    0:    64 KB   0    32
+    1:   256 KB   0    32
+    2:     1 MB   0    32
+    3:     4 MB   0    32
+    4:    16 MB   0    32
+    5:    16 MB   1    32
+    6:    32 MB   1    32
+    7:    32 MB   1    64
+    8:    64 MB   1    64
+    9:    64 MB   1    64
+ 
+  The default value for "level" is 5.
+
+  algo = 0 means fast method
+  algo = 1 means normal method
+
+dictSize - The dictionary size in bytes. The maximum value is
+        128 MB = (1 << 27) bytes for 32-bit version
+          1 GB = (1 << 30) bytes for 64-bit version
+     The default value is 16 MB = (1 << 24) bytes.
+     It's recommended to use the dictionary that is larger than 4 KB and
+     that can be calculated as (1 << N) or (3 << N) sizes.
+
+lc - The number of literal context bits (high bits of previous literal).
+     It can be in the range from 0 to 8. The default value is 3.
+     Sometimes lc=4 gives the gain for big files.
+
+lp - The number of literal pos bits (low bits of current position for literals).
+     It can be in the range from 0 to 4. The default value is 0.
+     The lp switch is intended for periodical data when the period is equal to 2^lp.
+     For example, for 32-bit (4 bytes) periodical data you can use lp=2. Often it's
+     better to set lc=0, if you change lp switch.
+
+pb - The number of pos bits (low bits of current position).
+     It can be in the range from 0 to 4. The default value is 2.
+     The pb switch is intended for periodical data when the period is equal 2^pb.
+
+fb - Word size (the number of fast bytes).
+     It can be in the range from 5 to 273. The default value is 32.
+     Usually, a big number gives a little bit better compression ratio and
+     slower compression process.
+
+numThreads - The number of thereads. 1 or 2. The default value is 2.
+     Fast mode (algo = 0) can use only 1 thread.
+
+In:
+  dest     - output data buffer
+  destLen  - output data buffer size
+  src      - input data
+  srcLen   - input data size
+Out:
+  destLen  - processed output size
+Returns:
+  SZ_OK               - OK
+  SZ_ERROR_MEM        - Memory allocation error
+  SZ_ERROR_PARAM      - Incorrect paramater
+  SZ_ERROR_OUTPUT_EOF - output buffer overflow
+  SZ_ERROR_THREAD     - errors in multithreading functions (only for Mt version)
+*/
+class LZMA: public libzpaq::Reader {
+  const unsigned char* in;    // input pointer
+  const unsigned n;           // input length
+  std::vector<unsigned char> outb;
+  unsigned i;                 // current location in in (0 <= i < n)
+  unsigned rpos, wpos;        // read, write pointers
+  int level;
+  unsigned dictSize;
+  unsigned inpos,outpos;
+  
+  void CompressLZMA();  // encode to buf
+
+public:
+  LZMA(StringBuffer& inbuf, int args[], const unsigned* sap=0);
+
+  // return 1 byte of compressed output (overrides Reader)
+  int get() {
+    int c=-1;
+    if (rpos<wpos) c=outb[rpos++];
+    if (rpos==wpos) rpos=wpos=0;
+    return c;
+  }
+
+  // Read up to p[0..n-1] and return bytes read.
+  int read(char* p, int n);
+
+};
+
+// Read n bytes of compressed output into p and return number of
+// bytes read in 0..n. 0 signals EOF (overrides Reader).
+int LZMA::read(char* p, int n) {
+  int nr=n;
+  if (nr>int(wpos-rpos)) nr=wpos-rpos;
+  if (nr) memcpy(p, &outb[rpos], nr);
+  rpos+=nr;
+  assert(rpos<=wpos);
+  if (rpos==wpos) rpos=wpos=0;
+  return nr;
+}
+
+LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
+    in(inbuf.data()),
+    n(inbuf.size()),
+    i(0),
+    rpos(0), wpos(0),level(args[2]),dictSize((1 <<lg((1 <<args[0])*1024*1024))/2) {
+  assert(args[0]>=0);
+  assert(n<=(1u<<20<<args[0]));
+  if (dictSize<0x10000) dictSize=0x10000; // 64kb
+  CompressLZMA();
+}
+
+// Encode from in to buf until end of input or buf is not empty
+void LZMA::CompressLZMA() {
+  size_t propsSize = LZMA_PROPS_SIZE;
+  size_t destLen = n + n / 3 + 128;
+  outb.resize(propsSize+ 8 + destLen); 
+  /*printf("LZMA dict %d\n",dictSize);
+  printf("LZMA level %d\n",level);*/
+  int res = LzmaCompress(
+    &outb[LZMA_PROPS_SIZE+8], &destLen,
+    &in[0], n,
+    &outb[0], &propsSize,
+    level, dictSize, -1, -1, -1, -1, -1);
+  
+  assert(propsSize == LZMA_PROPS_SIZE);
+  if (res == SZ_ERROR_MEM) error("LZMA - Memory allocation error");
+  else if (res == SZ_ERROR_PARAM) error("LZMA - Incorrect paramater");
+  else if (res == SZ_ERROR_OUTPUT_EOF) error("LZMA - output buffer overflow");
+  else if (res == SZ_ERROR_THREAD) error("LZMA - multithreading error");
+  else if (res != SZ_OK) error("LZMA - error");
+  
+  int64_t flen=n;
+  for (int i = 0; i < 8; i++)
+      outb[i+LZMA_PROPS_SIZE]=(unsigned char)(flen >> (8 * i));
+  outb.resize(propsSize+ 8 + destLen);
+  wpos=outb.size();
+}
+
 // Generate a config file from the method argument with syntax:
 // {0|x|s|i}[N1[,N2]...][{ciamtswf<cfg>}[N1[,N2]]...]...
 std::string makeConfig(const char* method, int args[]) {
@@ -7280,8 +7449,537 @@ std::string makeConfig(const char* method, int args[]) {
   const bool dobmp8 = args[1] == 11;
   const bool dopgm = args[1] == 12;
   const bool wbpe = args[1] == 13;
+  const bool lzma = args[1] == 14;
 
-  if (wbpe) {
+  if (lzma) {
+      level=5;
+      if (args[2]>9 || args[2]<0) args[2]=5; // lzma level
+      hdr="comp 0 0 26 16 ";
+      pcomp=
+      "pcomp lzmab.bat c ; (c - ignored)\n"
+      "(\n"
+      "hm:\n"
+      "    dictionary - 64M\n"
+      "    compressed data - up to 64M\n"
+      "pm:\n"
+      "    rep0      r[0]\n"
+      "    rep1      r[1]\n"
+      "    rep2      r[2]\n"
+      "    rep3      r[3]\n"
+      "    lc        r[4]\n"
+      "    lp        r[5]\n"
+      "    pb        r[6]\n"
+      "    range     r[7]\n"
+      "    code      r[8]\n"
+      "    t0        r[9]\n"
+      "    t1        r[10] unused=c\n"
+      "    t2        r[11]\n"
+      "    value     r[12]\n"
+      "    state     r[13]\n"
+      "    bit0      r[14]\n"
+      "    len       r[15]\n"
+      "    i         r[16]\n"
+      "    n         r[17]\n"
+      "    k         r[18]\n"
+      "    offset    r[19]\n"
+      "    pos       r[20]\n"
+      "    out       r[21]\n"
+      "    max size  r[22]\n"
+      "    dict size r[23]\n"
+      "    hdr state r[24]\n"
+      "    mask16    r[25]  0xffff for probability\n"
+      "    val1      r[26]  1846\n"
+      "    val2      r[27]  768\n"
+      "    val3      r[28]  2017\n"
+      "    val4      r[29]  1332\n"
+      "    val5      r[30]  818\n"
+      "    val6      r[31]  687 \n"
+      "    val7      r[32]  802 \n"
+      "    p1        r[33]  prob *\n"
+      "    p3        r[34]  prob *\n"
+      "    dict      r[35]  size / compressed data start - unused\n"
+      "    cdata     r[36]  compressed data pos\n"
+      ")\n"
+      "    *c=a c++ \n"
+      "    d=a\n"
+      "        a=r 24 (hdr state - 0 read header, 1 read data, 2 decode, 3 fail/end)\n"
+      "        a< 2 ifl    (read header, init)\n"
+      "            a== 0 ifl\n"
+      "                a=c a< 18 ifl                       (hdr: 1+4+8+1+4 (parameters, dict, size, 0, code)) \n"
+      "                    halt\n"
+      "                elsel \n"
+      "                    a= 255 b=a \n"
+      "                    a= 1 r=a 0 r=a 1 r=a 2 r=a 3    (rep0=1, rep1=1, rep2=1, rep3=1)\n"
+      "                    a=0 a-- r=a 7                   (range=~0)\n"
+      "                    a= 7 a<<= 8 a+= 54 r=a 26       (val1=1846) \n"
+      "                    a= 3 a<<= 8 r=a 27              (val2=768)\n"
+      "                    a-= 81  r=a 31                  (val6=687)\n"
+      "                    a+= 115 r=a 32                  (val7=802)\n"
+      "                    a+= 16  r=a 30                  (val5=818)\n"
+      "                    a+=b a+=b a+= 4 r=a 29          (val4=1332)\n"
+      "                    a+=b a+=b a+= 175 r=a 28        (val3=2017)\n"
+      "                    a= 1 a<<= 16 a-- r=a 25         (mask=0xffff prob)\n"
+      "                                                    (parse hdr)\n"
+      "                    c=0\n"
+      "                    a=*c a/= 9 r=a 6                (pb = a / 9)    \n"
+      "                    a=*c a%= 9 r=a 4                (lc = a % 9)\n"
+      "                    a=r 6 a%= 5 r=a 5               (lp = pb % 5)\n"
+      "                    a=r 6 a/= 5 r=a 6               (pb /= 5)\n"
+      "                    a> 4 if                         (pb > 4)\n"
+      "                       a= 3 r=a 24 (fail)\n"
+      "                       halt\n"
+      "                    endif\n"
+      "\n"
+      "                    a=c a+= 4 c=a  a=0              (dict size)\n"
+      "                    a+=*c a<<= 8 c-- a+=*c a<<= 8\n"
+      "                    c-- a+=*c a<<= 8 c-- a+=*c c--\n"
+      "                    r=a 23\n"
+      "                    a=c a+= 4 c=a\n"
+      "\n"
+      "                    a=c a+= 8 c=a a=0               (max size)\n"
+      "                    a+=*c a<<= 8 c-- a+=*c a<<= 8\n"
+      "                    c-- a+=*c a<<= 8 c-- a+=*c c--\n"
+      "                    a+=*c a<<= 8 c-- a+=*c a<<= 8\n"
+      "                    c-- a+=*c a<<= 8 c-- a+=*c c--\n"
+      "                    r=a 22                          (-1 if stream has EOF)\n"
+      "                    a=c a+= 8 c=a\n"
+      "\n"
+      "                    a=0 c++ a=*c                    (flag)\n"
+      "                    a> 0 if                 \n"
+      "                        a= 3 r=a 24                 (fail)\n"
+      "                        halt\n"
+      "                    endif\n"
+      "\n"
+      "                    a=0                             (code)  \n"
+      "                    a+=*c c++ a<<= 8 a+=*c c++ a<<= 8\n"
+      "                    a+=*c c++ a<<= 8 a+=*c c++ a<<= 8\n"
+      "                    a+=*c c++\n"
+      "                    r=a 8\n"
+      "                    \n"
+      "                    a=r 4 b=r 5 a+=b b=a a=r 27\n"
+      "                    a<<=b b=r 26 a+=b c=a           (num of probs=val1+(val2<<(lc+lp)))\n"
+      "                    a= 4 a<<= 8 b=a d=0             (1024)\n"
+      "                    do                              ( init probability )\n"
+      "                        a=b *d=a d++\n"
+      "                        a=d\n"
+      "                    a<c while\n"
+      "                    a= 1 b=r 6 a<<=b a-- r=a 6      (convert to mask (1 << r[6]) - 1)\n"
+      "                    a= 1 b=r 5 a<<=b a-- r=a 5      (convert to mask (1 << r[5]) - 1)\n"
+      "                    (c=0 a=0\n"
+      "                    do                              ( clear pm )\n"
+      "                        *c=0 c++ a++\n"
+      "                    a< 18 while)\n"
+      "\n"
+      "                    a= 1 r=a 24                     ( next state - read compressed data )\n"
+      "                    a=r 23 c=a                      ( set after dict)\n"
+      "                    r=a 36\n"
+      "                    halt\n"
+      "                endif\n"
+      "                                                    (end state==0)\n"
+      "            elsel \n"
+      "                a=d   \n"
+      "                a> 255 a=r 24 if\n"
+      "                    a= 2 r=a 24                     ( end main data read - decompress )\n"
+      "                endif \n"
+      "                a== 1 if                            (read data)\n"
+      "                    halt\n"
+      "                endif \n"
+      "            endif \n"
+      "        endif\n"
+      "        a== 3 ifl                                   (fail - something went wrong)\n"
+      "            halt\n"
+      "        endif\n"
+      "        a== 2 ifnot                                 (not decode - fail) \n"
+      "            halt \n"
+      "        endif\n"
+      "        (main decode loop)\n"
+      "        do\n"
+      "            a=0 r=a 15                                    (r[15] = 0)\n"
+      "            b=r 6  a=r 21 a&=b r=a 18                     (r[18] = r[21] & r[6])\n"
+      "            a=r 13 a*= 16 b=r 18 a+=b r=a 34 d=a          (p3 = r[13] * 16 + r[18])\n"
+      "                                                          (decode bit)\n"
+      "            a=r 7 a>>= 24 a== 0 if                        (if ((r[7] >> 24)==0))\n"
+      "                a=r 7 a<<= 8 r=a 7                        (r[7] <<= 8)\n"
+      "                a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
+      "                r=a 8 a=c r=a 36                          (r[8] = r[8] << 8 | *c)\n"
+      "            endif\n"
+      "            a=*d r=a 11 r=a 9 a=r 7 a>>= 11 \n"
+      "            b=r 9 a*=b c=a                                (r[11] = r[9] = *p3 r[10] = r[9] * (r[7] >> 11))\n"
+      "            a=r 8 a<c a=0 if a= 1 endif r=a 14            (r[14] = r[8] < r[10])\n"
+      "            a== 1 if                                      (if (r[14]) r[7] = r[10], r[11] -= r[28])\n"
+      "                a=c r=a 7 a=r 11 b=r 28 a-=b r=a 11\n"
+      "            else                                          \n"
+      "                a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8         (r[7]-= r[10], r[8]-= r[10])\n"
+      "            endif\n"
+      "            a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p3 = r[9]-(r[11] >> 5))\n"
+      "                                                          (decode bit end)\n"
+      "            a=r 14\n"
+      "            a> 0 ifl                                      (if (r[14]) )\n"
+      "                b=r 5 a=r 21 a&=b                         (r[18] = r[21] & r[5])\n"
+      "                b=r 4 a<<=b d=a a= 8 b=r 4 a-=b b=a \n"
+      "                a=r 12 a>>=b b=a a=d a|=b r=a 18          (r[18] = r[18] << r[4] | r[12] >> (8 - r[4]))\n"
+      "                b=r 27 a*=b b=r 26 a+=b r=a 34            (p3 = r[26] + r[27] * r[18])\n"
+      "                a=0 r=a 19 r=a 16                         (r[19] = r[16] = 0)\n"
+      "                a=r 13 a> 6 if                            (if ( r[13] >= 7) )\n"
+      "                    a= 1 a<<= 8 r=a 19                    (r[19] = 0x100)\n"
+      "                    a=r 20 b=r 0 a<b a=0 if a=r 23 endif  (r[16] = dict[(r[20] < r[0] ? r[23] : 0) + r[20] - r[0]])\n"
+      "                    b=r 20 a+=b b=r 0 a-=b b=a a=*b r=a 16\n"
+      "                endif\n"
+      "                a= 1 r=a 15 r=a 12                        (r[15] = r[12] = 1)\n"
+      "                do\n"
+      "                    a=r 16 a<<= 1 r=a 16                  (r[16] <<= 1)\n"
+      "                    b=r 19 d=b a&=b b=r 12 a+=b b=d a+=b\n"
+      "                    b=r 34 a+=b r=a 33 d=a                (p1 = p3 + r[19] + (r[16] & r[19]) + r[12])\n"
+      "                                                          (decode bit)\n"
+      "                    a=r 7 a>>= 24 a== 0 if                (if ((r[7] >> 24)==0) )\n"
+      "                        a=r 7 a<<= 8 r=a 7                (r[7] <<= 8)\n"
+      "                        a=r 8 a<<= 8 c=r 36 a|=*c c++ \n"
+      "                        r=a 8 a=c r=a 36                  (r[8] = r[8] << 8 | *c)\n"
+      "                    endif\n"
+      "                    a=*d r=a 11 r=a 9 a=r 7 a>>= 11\n"
+      "                    b=r 9 a*=b c=a                         (r[11] = r[9] = *p1 r[10] = r[9] * (r[7] >> 11))\n"
+      "                    a=r 8 a<c a=0 if a= 1 endif r=a 14     (r[14] = r[8] < r[10])\n"
+      "                    a== 1 if                               (if (r[14]) r[7] = r[10], r[11] -= r[28])\n"
+      "                        a=c r=a 7 a=r 11 b=r 28 a-=b r=a 11\n"
+      "                    else                                   (else r[7] -= r[10], r[8] -= r[10])\n"
+      "                        a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
+      "                    endif\n"
+      "                    a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
+      "                                                           (decode bit end)\n"
+      "                    a=r 12 a<<= 1 r=a 12                   (r[12] <<= 1)\n"
+      "                    a=r 14 a== 1 b=r 16 a=r 19 if          (if (r[14]) )\n"
+      "                        a&~b r=a 19                        (r[19] &=~r[16])\n"
+      "                    else \n"
+      "                        a&=b r=a 19 a=r 12 a++ r=a 12      (r[12]++, r[19] &= r[16])\n"
+      "                    endif\n"
+      "                    a= 1 a<<= 8 b=a a=r 12\n"
+      "                a<b while                                  (while (r[12] < 256))\n"
+      "                a=r 13 a< 4 if                             (r[13] -= r[13] < 4 ? r[13] : r[13] > 9 ? 6 : 3)\n"
+      "                      a=0\n"
+      "                else\n"
+      "                      a> 9 if \n"
+      "                         a-= 6\n"
+      "                      else\n"
+      "                         a-= 3\n"
+      "                      endif\n"
+      "                endif\n"
+      "                r=a 13\n"
+      "                a=r 21 a++ r=a 21\n"
+      "                a=r 12 a&= 255 r=a 12                      (r[12] &= 255)\n"
+      "                b=r 20 *b=a b++ a=b r=a 20                 (r[21]++ dict[r[20]++] = r[12])\n"
+      "                b=r 23\n"
+      "                a==b if                                    (if (r[20] == r[23]) )\n"
+      "                    b=0 d=r 20                             (output dictionary to file)\n"
+      "                    do     \n"
+      "                      a=*b out b++\n"
+      "                      a=b\n"
+      "                     a<d while\n"
+      "                    a=0 r=a 20                             (r[20] = 0)\n"
+      "                endif\n"
+      "            elsel\n"
+      "                a=r 13 a+= 192 r=a 33  d=a                 (p1 = 192 + r[13])\n"
+      "                a=r 13 a< 7 if a=0 else a= 3 endif r=a 13  (r[13] = r[13] < 7 ? 0 : 3)\n"
+      "                                                           (decode bit)\n"
+      "                a=r 7 a>>= 24 a== 0 if                     (if ((r[7] >> 24)==0) )\n"
+      "                    a=r 7 a<<= 8 r=a 7                     (r[7] <<= 8)\n"
+      "                    a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
+      "                    r=a 8 a=c r=a 36                       (r[8] = r[8] << 8 | *c)\n"
+      "                endif\n"
+      "                a=*d r=a 11 r=a 9 a=r 7 a>>= 11\n"
+      "                b=r 9 a*=b c=a                             (r[11] = r[9] = *p1 r[10] = r[9] * (r[7] >> 11))\n"
+      "                a=r 8 a<c a=0 if a= 1 endif r=a 14         (r[14] = r[8] < r[10])\n"
+      "                a== 1 if                                   (if (r[14]) r[7] = r[10], r[11] -= r[28])\n"
+      "                    a=c r=a 7 a=r 11 b=r 28 a-=b r=a 11\n"
+      "                else                                       (else r[7] -= r[10], r[8] -= r[10])\n"
+      "                    a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
+      "                endif\n"
+      "                a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
+      "                                                           (decode bit end)\n"
+      "            \n"
+      "                a=r 14 a> 0 ifl                            (if (r[14]) )\n"
+      "                    a=r 2 r=a 3 a=r 1 r=a 2 a=r 0 r=a 1    (r[3] = r[2] r[2] = r[1] r[1] = r[0])\n"
+      "                    a=r 30 r=a 33                          (p1 = r[30])\n"
+      "                elsel\n"
+      "                    a=r 33 a+= 12 r=a 33  d=a              (p1 += 12)\n"
+      "                                                           (decode bit)\n"
+      "                    a=r 7 a>>= 24 a== 0 if                 (if ((r[7] >> 24)==0) )\n"
+      "                        a=r 7 a<<= 8 r=a 7                 (r[7] <<= 8)\n"
+      "                        a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
+      "                        r=a 8 a=c r=a 36                   (r[8] = r[8] << 8 | *c)\n"
+      "                    endif\n"
+      "                    a=*d r=a 11 r=a 9 a=r 7 a>>= 11\n"
+      "                    b=r 9 a*=b c=a                         (r[11] = r[9] = *p1 r[10] = r[9] * (r[7] >> 11))\n"
+      "                    a=r 8 a<c a=0 if a= 1 endif r=a 14     (r[14] = r[8] < r[10])\n"
+      "                    a== 1 if                               (if (r[14]) r[7] = r[10], r[11] -= r[28])\n"
+      "                        a=c r=a 7 a=r 11 b=r 28 a-=b r=a 11\n"
+      "                    else                                   (else r[7] -= r[10], r[8] -= r[10])\n"
+      "                        a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
+      "                    endif\n"
+      "                    a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
+      "                                                           (decode bit end)\n"
+      "                    a=r 14 a> 0 ifl                        ( if (r[14]) )\n"
+      "                        a=r 34 a+= 240 r=a 34 d=a          (p3 += 240)\n"
+      "                                                           (decode bit)\n"
+      "                        a=r 7 a>>= 24 a== 0 if             (if ((r[7] >> 24)==0) )\n"
+      "                            a=r 7 a<<= 8 r=a 7             (r[7] <<= 8)\n"
+      "                            a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
+      "                            r=a 8 a=c r=a 36               (r[8] = r[8] << 8 | *c)\n"
+      "                        endif\n"
+      "                        a=*d r=a 11 r=a 9 a=r 7 a>>= 11\n"
+      "                        b=r 9 a*=b c=a                     (r[11] = r[9] = *p3 r[10] = r[9] * (r[7] >> 11))\n"
+      "                        a=r 8 a<c a=0 if a= 1 endif r=a 14 (r[14] = r[8] < r[10])\n"
+      "                        a== 1 if                           (if (r[14]) r[7] = r[10], r[11] -= r[28])\n"
+      "                            a=c r=a 7 a=r 11 b=r 28 a-=b r=a 11\n"
+      "                            a=r 13 a|= 9 r=a 13 a= 1 r=a 15  ( r[13] |= 9, r[15] = 1)\n"
+      "                        else                                (else r[7] -= r[10], r[8] -= r[10])\n"
+      "                            a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
+      "                        endif\n"
+      "                        a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p3 = r[9] - (r[11] >> 5))\n"
+      "                                                            (decode bit end)\n"
+      "                    elsel\n"
+      "                        a=r 33 a+= 12 r=a 33 d=a            (p1 += 12)\n"
+      "                                                            (decode bit)\n"
+      "                        a=r 7 a>>= 24 a== 0 if              (if ((r[7] >> 24)==0) )\n"
+      "                            a=r 7 a<<= 8 r=a 7              (r[7] <<= 8)\n"
+      "                            a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
+      "                            r=a 8 a=c r=a 36                (r[8] = r[8] << 8 | *c)\n"
+      "                        endif\n"
+      "                        a=*d r=a 11 r=a 9 a=r 7 a>>= 11 \n"
+      "                        b=r 9 a*=b c=a                      (r[11] = r[9] = *p1 r[10] = r[9] * (r[7] >> 11))\n"
+      "                        a=r 8 a<c a=0 if a= 1 endif r=a 14  (r[14] = r[8] < r[10])\n"
+      "                        a== 1 if                            (if (r[14]) r[7] = r[10], r[11] -= r[28])\n"
+      "                            a=c r=a 7 a=r 11 b=r 28 a-=b r=a 11\n"
+      "                            a=r 1 r=a 17                    (r[17] = r[1])\n"
+      "                        else                                (else r[7] -= r[10], r[8] -= r[10])\n"
+      "                            a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
+      "                        endif\n"
+      "                        a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
+      "                                                            (decode bit end)\n"
+      "                        a=r 14 a== 0 ifl                    (if (r[14]==0) )\n"
+      "                            a=r 33 a+= 12 r=a 33 d=a        (p1 += 12)\n"
+      "                                                            (decode bit)\n"
+      "                            a=r 7 a>>= 24 a== 0 if          (if ((r[7] >> 24)==0) )\n"
+      "                                a=r 7 a<<= 8 r=a 7          (r[7] <<= 8)\n"
+      "                                a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
+      "                                r=a 8 a=c r=a 36            (r[8] = r[8] << 8 | *c)\n"
+      "                            endif\n"
+      "                            a=*d r=a 11 r=a 9 a=r 7 a>>= 11\n"
+      "                            b=r 9 a*=b c=a                  (r[11] = r[9] = *p1 r[10] = r[9] * (r[7] >> 11))\n"
+      "                            a=r 8 a<c a=0 if a= 1 endif r=a 14  (r[14] = r[8] < r[10])\n"
+      "                            a== 1 if                        (if (r[14]) r[7] = r[10], r[11] -= r[28])\n"
+      "                                a=c r=a 7 a=r 11 b=r 28 a-=b r=a 11\n"
+      "                                a=r 2 r=a 17                ( r[17] = r[2])\n"
+      "                            else                            (else r[7] -= r[10], r[8] -= r[10])\n"
+      "                                a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
+      "                                a=r 3 r=a 17 a=r 2 r=a 3     (r[17] = r[3], r[3] = r[2])\n"
+      "                            endif\n"
+      "                            a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
+      "                                                            (decode bit end)\n"
+      "                            a=r 1 r=a 2                     (r[2] = r[1])\n"
+      "                        endif\n"
+      "                        a=r 0 r=a 1 a=r 17 r=a 0            (r[1] = r[0] r[0] = r[17])\n"
+      "                    endif\n"
+      "                    a=r 15 a== 0 if                         (if (r[15]==0) p1 = r[29], r[13] |= 8)\n"
+      "                        a=r 29 r=a 33 a=r 13 a|= 8 r=a 13\n"
+      "                    else                                    (else r[13] |= 9)\n"
+      "                        a=r 13 a|= 9 r=a 13\n"
+      "                    endif\n"
+      "                endif\n"
+      "            \n"
+      "                a=r 15 a== 0 ifl                            (if (r[15]==0) )\n"
+      "                    a= 2 r=a 15 a= 8 r=a 17                 (r[15] = 2 r[17] = 8)\n"
+      "                    b=r 18 a*=b a+= 2 b=r 33 a+=b r=a 34    (p3 = p1 + r[18] * 8 + 2)\n"
+      "                                                            (decode bit)\n"
+      "                    a=r 7 a>>= 24 a== 0 if                  (if ((r[7] >> 24)==0) )\n"
+      "                        a=r 7 a<<= 8 r=a 7                  (r[7] <<= 8)\n"
+      "                        a=r 8 a<<= 8 c=r 36 a|=*c c++ \n"
+      "                        r=a 8 a=c r=a 36                    (r[8] = r[8] << 8 | *c)\n"
+      "                    endif\n"
+      "                    d=r 33 a=*d r=a 11 r=a 9 a=r 7 a>>= 11 \n"
+      "                    b=r 9 a*=b c=a                          (r[11] = r[9] = *p1 r[10] = r[9] * (r[7] >> 11))\n"
+      "                    a=r 8 a<c a=0 if a= 1 endif r=a 14      (r[14] = r[8] < r[10])\n"
+      "                    a== 1 if                                (if (r[14]) r[7] = r[10], r[11] -= r[28])\n"
+      "                        a=c r=a 7 a=r 11 b=r 28 a-=b r=a 11\n"
+      "                    else                                    (else r[7] -= r[10], r[8] -= r[10])\n"
+      "                        a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
+      "                    endif\n"
+      "                    a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
+      "                                                            (decode bit end)\n"
+      "                    a=r 14 a== 0 ifl                        (if (r[14]==0) )\n"
+      "                        a=r 33 a++ r=a 33 d=a a= 10 r=a 15  (p1++ r[15] = 10)\n"
+      "                        a=r 34 a+= 128 r=a 34               (p3 += 128)\n"
+      "                                                            (decode bit)\n"
+      "                        a=r 7 a>>= 24 a== 0 if              (if ((r[7] >> 24)==0) )\n"
+      "                            a=r 7 a<<= 8 r=a 7              (r[7] <<= 8)\n"
+      "                            a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
+      "                            r=a 8 a=c r=a 36                (r[8] = r[8] << 8 | *c)\n"
+      "                        endif\n"
+      "                        a=*d r=a 11 r=a 9 a=r 7 a>>= 11\n"
+      "                        b=r 9 a*=b c=a                      (r[11] = r[9] = *p1 r[10] = r[9] * (r[7] >> 11))\n"
+      "                        a=r 8 a<c a=0 if a= 1 endif r=a 14  (r[14] = r[8] < r[10])\n"
+      "                        a== 1 if                            (if (r[14]) r[7] = r[10], r[11] -= r[28])\n"
+      "                            a=c r=a 7 a=r 11 b=r 28 a-=b r=a 11\n"
+      "                        else                                (else r[7] -= r[10], r[8] -= r[10])\n"
+      "                            a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
+      "                            a= 255 a++ r=a 17               (r[17] = 255+1, p3 = p1 + r[17] + 1, r[15] += 8)\n"
+      "                            a++ b=r 33 a+=b r=a 34\n"
+      "                            a=r 15 a+= 8 r=a 15\n"
+      "                        endif\n"
+      "                        a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
+      "                                                            (decode bit end)\n"
+      "                    endif\n"
+      "                                                            (BIT TREE)\n"
+      "                    a= 1 r=a 12                             (r[12] = 1)\n"
+      "                    do\n"
+      "                        a=r 34 b=r 12 a+=b r=a 33 d=a       (p1 = p3 + r[12])\n"
+      "                                                            (decode bit)\n"
+      "                        a=r 7 a>>= 24 a== 0 if              (if ((r[7] >> 24)==0) )\n"
+      "                            a=r 7 a<<= 8 r=a 7              (r[7] <<= 8)\n"
+      "                            a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
+      "                            r=a 8 a=c r=a 36                (r[8] = r[8] << 8 | *c)\n"
+      "                        endif\n"
+      "                        a=r 12 a<<= 1 r=a 12                (r[12] <<= 1)\n"
+      "                        a=*d r=a 11 r=a 9 a=r 7 a>>= 11 \n"
+      "                        b=r 9 a*=b c=a                      (r[11] = r[9] = *p1 r[10] = r[9] * (r[7] >> 11))\n"
+      "                        a=r 8 a<c a=0 if a= 1 endif r=a 14  (r[14] = r[8] < r[10])\n"
+      "                        a== 1 if                            (if (r[14]) r[7] = r[10], r[11] -= r[28])\n"
+      "                            a=c r=a 7 a=r 11 b=r 28 a-=b r=a 11\n"
+      "                        else                                (else r[7] -= r[10], r[8] -= r[10])\n"
+      "                            a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
+      "                            a=r 12 a++ r=a 12               (r[12]++)\n"
+      "                        endif\n"
+      "                        a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
+      "                                                            (decode bit end)\n"
+      "                        a=r 12 b=r 17\n"
+      "                    a<b while                               (while (r[12] < r[17]))\n"
+      "                    a=r 12 b=r 17 a-=b r=a 12               (r[12] -= r[17])\n"
+      "                                                            (BIT TREE end)\n"
+      "                    a=r 15 b=r 12 a+=b r=a 15               (r[15] += r[12])\n"
+      "                    a=r 13 a< 4 ifl                         (if (r[13] < 4) )\n"
+      "                        a=r 13 a+= 7 r=a 13 a= 64 r=a 17    (r[13] += 7 r[17] = 64)\n"
+      "                                                            (p3 = 255+49 + (r[15] < 6 ? r[15] : 5) * r[17])\n"
+      "                        a=r 15 a< 6 if a=a else a= 5 endif\n"
+      "                        b=r 17 a*=b a+= 255 a+= 49 r=a 34\n"
+      "                                                            (BIT TREE)\n"
+      "                        a= 1 r=a 12                         (r[12] = 1)\n"
+      "                        do\n"
+      "                            a=r 34 b=r 12 a+=b r=a 33  d=a  (p1 = p3 + r[12])\n"
+      "                                                            (decode bit)\n"
+      "                            a=r 7 a>>= 24 a== 0 if          (if ((r[7] >> 24)==0))\n"
+      "                                a=r 7 a<<= 8 r=a 7          (r[7] <<= 8)\n"
+      "                                a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
+      "                                r=a 8 a=c r=a 36            (r[8] = r[8] << 8 | *c)\n"
+      "                            endif\n"
+      "                            a=*d r=a 11 r=a 9 a=r 7 a>>= 11 \n"
+      "                            b=r 9 a*=b c=a                  (r[11] = r[9] = *p1 r[10] = r[9] * (r[7] >> 11))\n"
+      "                            a=r 8 a<c a=0 if a= 1 endif r=a 14 (r[14] = r[8] < r[10])\n"
+      "                            a== 1 if                        (if (r[14]) )\n"
+      "                                a=c r=a 7 a=r 11 b=r 28 a-=b r=a 11 (r[7]= r[10], r[11]-= r[28])\n"
+      "                            else                                   \n"
+      "                                a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8   (r[7]-= r[10], r[8]-= r[10])\n"
+      "                            endif\n"
+      "                            a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1=r[9]-(r[11]>>5))\n"
+      "                                                                   (decode bit end)\n"
+      "                            a=r 12 a<<= 1 r=a 12                   (r[12] <<= 1)\n"
+      "                            a=r 14 a== 0 if a=r 12 a++ r=a 12 endif (if (r[14]==0) r[12]++)\n"
+      "                            a=r 12 b=r 17\n"
+      "                        a<b while                                  (while (r[12] < r[17]))\n"
+      "                        a=r 12 b=r 17 a-=b r=a 12                  (r[12] -= r[17])\n"
+      "                                                            (BIT TREE end)\n"
+      "                        a=r 12 r=a 0                               (r[0] = r[12])\n"
+      "                        a=r 0 a> 3 ifl                             (if (r[0] > 3) )\n"
+      "                            a=r 12 a>>= 1 a-- r=a 17               (r[17] = (r[12] >> 1) - 1)\n"
+      "                            a= 1 b=r 17 a<<=b r=a 16               (r[16] = 1 << r[17])\n"
+      "                            a=r 12 a&= 1 a|= 2 b=r 17 a<<=b r=a 0  (r[0] = (2 | (r[12] & 1)) << r[17])\n"
+      "                            a=r 17 a< 6 if                         (if (r[17] < 6) p3 = r[31] + r[0] - r[12])\n"
+      "                                a=r 31 b=r 0 a+=b  b=r 12 a-=b r=a 34\n"
+      "                            else\n"
+      "                                do\n"
+      "                                     a=r 7 a>>= 24 a== 0 if        (if ((r[7] >> 24)==0))\n"
+      "                                        a=r 7 a<<= 8 r=a 7         (r[7] <<= 8)\n"
+      "                                        a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
+      "                                        r=a 8 a=c r=a 36           (r[8] = r[8] << 8 | *c)\n"
+      "                                    endif\n"
+      "                                    a=r 16 a>>= 1 r=a 16  \n"
+      "                                    a=r 7 a>>= 1 r=a 7 b=a         (r[16] >>= 1 r[7] >>= 1)\n"
+      "                                    a=r 8                          (if (r[8] >= r[7]))\n"
+      "                                    a<b ifnot \n"
+      "                                        a-=b r=a 8 a=r 0 \n"
+      "                                        b=r 16 a+=b r=a 0          (r[8] -= r[7], r[0] += r[16])\n"
+      "                                    endif\n"
+      "                                    a=r 16 a-= 16\n"
+      "                                a> 0 while                          (while (r[16] != 16))\n"
+      "                                a=r 32 r=a 34                       (p3 = r[32])\n"
+      "                            endif\n"
+      "                            a= 1 r=a 17 r=a 12                      (r[17] = r[12] = 1)\n"
+      "                            do\n"
+      "                                a=r 34 b=r 12 a+=b r=a 33  d=a      (p1 = p3 + r[12])\n"
+      "                                a=r 12 a<<= 1 r=a 12                (r[12] <<= 1)\n"
+      "                                                                    (decode bit)\n"
+      "                                a=r 7 a>>= 24 a== 0 if              (if ((r[7] >> 24)==0) )\n"
+      "                                    a=r 7 a<<= 8 r=a 7              (r[7] <<= 8)\n"
+      "                                    a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
+      "                                    r=a 8 a=c r=a 36                (r[8] = r[8] << 8 | *c)\n"
+      "                                endif\n"
+      "                                a=*d r=a 11 r=a 9 a=r 7 a>>= 11 \n"
+      "                                b=r 9 a*=b c=a                      (r[11] = r[9] = *p1 r[10] = r[9] * (r[7] >> 11))\n"
+      "                                a=r 8 a<c a=0 if a= 1 endif r=a 14  (r[14] = r[8] < r[10])\n"
+      "                                a== 1 if                            (if (r[14]) r[7] = r[10], r[11] -= r[28])\n"
+      "                                    a=c r=a 7 a=r 11 b=r 28 a-=b r=a 11\n"
+      "                                else                                (else r[7] -= r[10], r[8] -= r[10])\n"
+      "                                    a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
+      "                                    a=r 12 a++ r=a 12 a=r 0 b=r 17 a|=b r=a 0 (r[12]++, r[0] |= r[17])\n"
+      "                                endif\n"
+      "                                a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
+      "                                                                    (decode bit end)\n"
+      "                                a=r 17 a<<= 1 r=a 17                (r[17] <<= 1)\n"
+      "                                a=r 12 b=r 16\n"
+      "                            a<b while                               (while (r[12] < r[16]))\n"
+      "                        endif\n"
+      "                        a=r 0 a++ r=a 0                             (r[0]++)\n"
+      "                    endif\n"
+      "                endif\n"
+      "                a=r 0 a== 0 if                                      (if (r[0]==0) ) (stream EOF)\n"
+      "                    a=r 20 a> 0 if                                  (if (r[20]) )\n"
+      "                        b=0 d=r 20                                  (output dictionary to file)\n"
+      "                        do     \n"
+      "                            a=*b out b++\n"
+      "                            a=b\n"
+      "                        a<d while\n"
+      "                    endif\n"
+      "                    a= 3 r=a 24                                     (end decode)\n"
+      "                    halt\n"
+      "                endif\n"
+      "                do\n"
+      "                    a=r 20 d=a b=r 0 a<b a=0 if a=r 23 endif        (r[12] = dict[(r[20] < r[0] ? r[23] : 0) + r[20] - r[0]])\n"
+      "                    a+=d b=r 0 a-=b b=a a=*b r=a 12\n"
+      "                    b=d *b=a b++ a=b r=a 20                         (dict[r[20]++] = r[12])\n"
+      "                    a=r 21 a++ r=a 21                               (r[21]++)\n"
+      "                    a=r 20 b=r 23 a==b if                           (if (r[20] == r[23]) )\n"
+      "                        b=0 d=r 20                                  (output dictionary to file)\n"
+      "                        do     \n"
+      "                            a=*b out b++\n"
+      "                            a=b\n"
+      "                        a<d while\n"
+      "                        a=0 r=a 20 \n"
+      "                    endif \n"
+      "                    a=r 15 a-- r=a 15\n"
+      "                a> 0 while                                          (while (--r[15]))\n"
+      "            endif                \n"
+      "            a=r 21 b=r 22\n"
+      "        a<b while                                                   (out < max_size (r[21] < r[22]))\n"
+      "                                                                    (main loop end)\n"
+      "        a=r 20 a> 0 if                                              (if (r[20] == r[23]) )\n"
+      "            b=0 d=r 20                                              (output dictionary to file)\n"
+      "            do     \n"
+      "                a=*b out b++\n"
+      "                a=b\n"
+      "            a<d while\n"
+      "            a= 3 r=a 24                                             (end decode)\n"
+      "        endif\n"
+      "    halt\n"
+      "end";
+  } else if (wbpe) {
   level=4;
     hdr="comp 9 16 0 16 ";
       pcomp=
@@ -8195,8 +8893,10 @@ std::string makeConfig(const char* method, int args[]) {
     else
       pcomp="end\n";
   }
-  else if (level==4)
-  /*printf("WBPE\n")*/;
+  else if (level==4 || level==5)
+  /* if (level==4) printf("WBPE\n");
+     else if (level==5) printf("LZMA\n");
+  */;
   else
     error("Unsupported method");
   
@@ -8481,9 +9181,12 @@ std::string makeConfig(const char* method, int args[]) {
      if (level==4) hdr="comp 11 16 0 16 "; // wbpe
      else hdr="comp 11 16 0 0 ";
     }
+    
   }
+  if (level==5) hdr="comp 0 0 16 "+itos(lg((1 <<args[0])*1024*1024)+0)+" ",hcomp="hcomp \n"; // lzma, set block size for dict
 
   return hdr+itos(ncomp)+"\n"+comp+hcomp+"halt\n"+pcomp;
+  
 }
 
 // Compress from in to out in 1 segment in 1 block using the algorithm
@@ -8587,8 +9290,8 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
           method+=",c0.0.15.255i2n1,1,0,1,0";//n0,1,0,1,0
       else if (type<21)  // store if not compressible 20?
         method+=",0";
-      else if (type<48)  // fast LZ77 if barely compressible
-        method+=","+itos(1+doe8)+",4,0,3"+htsz;
+      //else if (type<48)  // fast LZ77 if barely compressible
+      //  method+=","+itos(1+doe8)+",4,0,3"+htsz;
       else if (type>=640 || (type&1)) {  // BWT if text or highly compressible
         int lowP=0;
         if ((type&1)==0) {
@@ -8628,7 +9331,9 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
         method+=","+itos(3+doe8)+"ci"+itos(1+(lowP/2))+"s8,32,85";
       }
       else  // LZ77 with O0-1 compression of up to 12 literals
-        method+=","+itos(2+doe8)+",12,0,7"+sasz+",1c0,0,511i2s8,32,65";
+        //method+=","+itos(2+doe8)+",12,0,7"+sasz+",1c0,0,511i2s8,32,65";
+        //else if (type<100*4)  // lzma
+        method+=",14,7";
     }
 
     // LZ77+CM, fast CM, or BWT depending on type
@@ -8905,6 +9610,11 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
   else if (args[1]==13) {  // WBPE
     WBPE wbpe(*in, args);
     co.setInput(&wbpe);
+    co.compress();
+  }
+  else if (args[1]==14) {  // LZMA
+    LZMA lzma(*in, args);
+    co.setInput(&lzma);
     co.compress();
   }
   else {  // compress with e8e9 or no preprocessing

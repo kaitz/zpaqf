@@ -9,3 +9,4 @@ Makefile.win
 zpaqf.dev
 zpaqf.layout
 /test
+*.a
