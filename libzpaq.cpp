@@ -1,4 +1,4 @@
-/* libzpaq.cpp - LIBZPAQ Version 7.15 implementation - Aug. 17, 2016.
+/* libzpaq.cpp - LIBZPAQ Version 7.15.7 implementation - Dets. 30, 2025.
 
   libdivsufsort.c for divsufsort 2.00, included within, is
   (C) 2003-2008 Yuta Mori, all rights reserved.
@@ -9,6 +9,10 @@
   and is public domain.
 
   The Salsa20/8 code for Scrypt is by D. Bernstein and is public domain.
+
+  WBPE is based on wbpe.cpp v1.1 - Preprocessor for text compression
+                        (C) 2011, Dell Inc. Written by Matt Mahoney. GPL-3
+                        https://www.gnu.org/licenses/gpl-3.0.html
 
   All of the remaining software is provided as-is, with no warranty.
   I, Matt Mahoney, release this software into
@@ -6882,6 +6886,360 @@ void LZBuffer::write_match(unsigned len, unsigned off) {
   }
 }
 
+// WBPE is based on wbpe.cpp v1.1 - Preprocessor for text compression
+// word byte pair encoding
+class WBPE: public libzpaq::Reader {
+  const unsigned char* in;    // input pointer
+  const unsigned n;           // input length
+  unsigned i;                 // current location in in (0 <= i < n)
+  unsigned rpos, wpos;        // read, write pointers
+  enum {BUFSIZE=1<<14};       // output buffer size
+  unsigned char buf[BUFSIZE]; // output buffer
+  static const int LEN=19;    // maximum string length
+  int idx[256];               //  fast lookup index
+  int slen;                   //length of s in 0..LEN
+  unsigned inpos,outpos;
+  unsigned char ins[LEN+1]={0};  // input buffer
+  int esc, cap, upper;
+  bool doCap;
+  // Hash table or dictionary element containing a count and a word
+  struct Element {
+    int count;
+    unsigned char s[LEN+1];  // length in first byte
+  };
+  
+  Element dict2[256];
+  
+  bool less(const Element& a, const Element& b) {
+  for (int i=1; i<=a.s[0] && i<=b.s[0]; ++i) {
+    int ac=chartype(a.s[i]), bc=chartype(b.s[i]);
+    if (ac<bc) return true;
+    if (ac>bc) return false;
+    if (a.s[i]<b.s[i]) return true;
+    if (a.s[i]>b.s[i]) return false;
+  }
+  return a.s[0]<b.s[0];
+}
+  // For counting strings
+  struct Hashtable {
+    enum {N=1<<18};  // N strings of length LEN
+    libzpaq::Array<Element> t;  // table of N
+    void count(const unsigned char* s, int len) {
+    if (len>LEN) len=len;
+    if (len<1) return;
+    if (!s) return;
+  
+    // Compute hash
+    unsigned int h=0;
+    for (int i=0; i<len; ++i) {
+      h+=s[i]+1;
+      h*=773;
+    }
+    h&=N-1;
+  
+    // Look for s in t. If found then increment count. If not found then
+    // insert in first of 4 empty slots. If full then give up.
+    for (int i=0; i<4; ++i) {
+      if (t[h^i].s[0]==len && memcmp(t[h^i].s+1, s, len)==0) {
+        ++t[h^i].count;
+        return;
+      }
+      else if (t[h^i].count==0) {
+        t[h^i].count=1;
+        t[h^i].s[0]=len;
+        memcpy(t[h^i].s+1, s, len);
+        return;
+      }
+    }
+  }
+    Hashtable():t(N) {}
+  };
+  
+  void fill();  // encode to buf
+
+  // write 1 byte
+  void put(int c) {
+    assert(wpos<BUFSIZE);
+    buf[wpos++]=c;
+    outpos++;
+  }
+  
+  // words are strings of the same chartype
+  int chartype(int c) {
+    c&=255;
+    if (c<=32) return 1;  // whitespace
+    if (c>='A' && c<='Z') return 257;  // uppercase letter
+    if (c>='a' && c<='z') return 257;  // lowercase letter
+    if (c>=128) return 257;  // unicode letter
+    if (c>='0' && c<='9') return 256;  // digit
+    return c;  // punctuation
+  }
+  
+  // Upper case?
+  int isupper(int c) {
+    return c>='A' && c<='Z';
+  }
+  
+  enum {TEXT=256, ESC, CAP, UPPER};  // decoding states
+  
+  // Compare s[0..len-1] and t[0..len-1]. If equal return TEXT.
+  // If equal except case of first byte then return CAP.
+  // If equal except case of all bytes is opposite then return UPPER.
+  // Otherwise return ESC.
+  int match(const unsigned char* s, const unsigned char* t, int len) {
+    if (len<1 || !memcmp(s, t, len))
+       return TEXT;
+    if ((s[0]^t[0])==32 && (len<2 || !memcmp(s+1, t+1, len-1)))
+       return CAP;
+    for (int i=0; i<len; ++i)
+      if ((s[i]^t[i])!=32)
+        return ESC;
+    return UPPER;
+  }
+  
+  // Decode c in dict[dn][3] to out where out[0] is current length
+  // dict[i][0..2] means that dict[i][0] decodes recursively to
+  // the byte pair dict[i][1], dict[i][2]. If no dict[i][0] matches
+  // c for lower i, then c decodes to itself.
+  void printto(unsigned char dict[][3], int dn, int c, unsigned char* out) {
+    int i;
+    for (i=dn-1; i>=0 && dict[i][0]!=c; --i);  // find dict[i][0] == c
+    if (i>=0) {  // found?
+      printto(dict, i, dict[i][1], out);
+      printto(dict, i, dict[i][2], out);
+    }
+    else
+      out[++out[0]]=c;
+  }   
+
+public:
+  WBPE(StringBuffer& inbuf, int args[], const unsigned* sap=0);
+
+  // return 1 byte of compressed output (overrides Reader)
+  int get() {
+    int c=-1;
+    if (rpos==wpos) fill();
+    if (rpos<wpos) c=buf[rpos++];
+    if (rpos==wpos) rpos=wpos=0;
+    return c;
+  }
+
+  // Read up to p[0..n-1] and return bytes read.
+  int read(char* p, int n);
+  void build();
+};
+
+// Read n bytes of compressed output into p and return number of
+// bytes read in 0..n. 0 signals EOF (overrides Reader).
+int WBPE::read(char* p, int n) {
+  if (rpos==wpos) fill();
+  int nr=n;
+  if (nr>int(wpos-rpos)) nr=wpos-rpos;
+  if (nr) memcpy(p, buf+rpos, nr);
+  rpos+=nr;
+  assert(rpos<=wpos);
+  if (rpos==wpos) rpos=wpos=0;
+  return nr;
+}
+
+WBPE::WBPE(StringBuffer& inbuf, int args[], const unsigned* sap):
+    in(inbuf.data()),
+    n(inbuf.size()),
+    i(0),
+    rpos(0), wpos(0),
+    slen(0),inpos(0),outpos(0),
+    esc(-1), cap(-1),upper(-1),doCap(args[2]==1) {
+  assert(args[0]>=0);
+  assert(n<=(1u<<20<<args[0]));
+  memset(dict2, 0, sizeof(dict2));
+  build();
+  fill();
+}
+void WBPE::build() {
+    assert(in || n==0);
+    // Parse input into a Hashtable and count. A token consists
+  // of up to LEN characters of the same type such that all
+  // letters are the same case or only the first letter is upper case.
+  // Store as lower case.
+  int c;        // input byte
+  int chars=0;  // input limited to 2 GB to prevent int overflows
+  Hashtable ht; // list of input words with counts
+  unsigned char s[LEN+1]={0};  // input buffer
+  int len=0;    //length of s in 0..LEN
+  int n1[256]={0};  // char count
+  
+  // Pass 1, building dictionary...
+  while (inpos<n, c=in[inpos++]) {
+    ++n1[c];
+    if (len==0)
+      s[len++]=c;
+    else if (len<LEN && chartype(c)==chartype(s[len-1])
+        && isupper(c)<=isupper(s[0])
+        && (len==1 || isupper(c)==isupper(s[len-1])))
+      s[len++]=c;
+    else {
+        // convert to lower case
+        if (doCap) for (int i=0; i<len && isupper(s[i]); ++i)
+          s[i]^=32;
+      ht.count(s, len);
+      len=1;
+      s[0]=c;
+    }
+  }
+  if (len>0) ht.count(s, len);
+
+  // Find 3 least freqent bytes to represent ESC, CAP, UPPER
+  for (int i=0; i<256; ++i)
+    if (esc<0 || n1[i]<n1[esc]) esc=i;
+  for (int i=0; i<256; ++i)
+    if (i!=esc && (cap<0 || n1[i]<n1[cap])) cap=i;
+  for (int i=0; i<256; ++i)
+    if (i!=esc && i!=cap && (upper<0 || n1[i]<n1[upper])) upper=i;
+
+  // Reduce using byte code pairing
+  int escaped=0;
+  unsigned char dict[512][3]={{0}};  // BPE [0] expands to [1],[2]
+  int dn;  // size of dict
+  for (dn=0; dn<512; ++dn) {
+    // Count bytes and pairs
+    int c1=0, n2[256][256]={{0}};
+    memset(n1, 0, sizeof(n1));
+    for (int i=0; i<Hashtable::N; ++i) {
+      if (ht.t[i].count) {
+        for (int j=1; j<=ht.t[i].s[0]; ++j) {
+          int c0=ht.t[i].s[j]&255;
+          n1[c0]+=ht.t[i].count;
+          if (j>1) n2[c1][c0]+=ht.t[i].count;
+          c1=c0;
+        }
+      }
+    }
+
+    // Find least frequent byte
+    int min0=-1;
+    for (int i=0; i<256; ++i)
+      if (n1[i]>=0 && (min0<0 || n1[i]<n1[min0])
+          && i!=cap && i!=esc && i!=upper)
+        min0=i;
+    if (min0<0) break;
+
+    // Find most frequent pair
+    int max0=0, max1=0;
+    for (int i=0; i<256; ++i)
+      for (int j=0; j<256; ++j)
+        if (n2[i][j]>n2[max1][max0])
+          max1=i, max0=j;
+
+    // Quit if encoding would make the string larger
+    if (n1[min0]>=n2[max1][max0]) break;
+
+    // Update dict
+    escaped+=n1[min0];  // size of data in ht
+    dict[dn][0]=min0;
+    dict[dn][1]=max1;
+    dict[dn][2]=max0;
+
+    // Update ht with pair substitution
+    int size=escaped;
+    for (int i=0; i<Hashtable::N; ++i) {
+      if (ht.t[i].count) {
+        int k=1;  // output pointer
+        for (int j=1; j<=ht.t[i].s[0]; ++j, ++k) {
+          if (j<ht.t[i].s[0] && ht.t[i].s[j]==max1 && ht.t[i].s[j+1]==max0)
+            ht.t[i].s[k]=min0, ++j;
+          else if (k<j)
+            ht.t[i].s[k]=ht.t[i].s[j];
+        }
+        ht.t[i].s[0]=k-1;
+        size+=ht.t[i].count*(k-1);
+      }
+    }
+  }
+
+  // Create expanded dictionary
+  //Element dict2[256];
+  for (int i=0; i<256; ++i)
+    printto(dict, dn, i, dict2[i].s);
+  dict2[cap].s[0]=0;  // empty
+  dict2[esc].s[0]=0;
+  dict2[upper].s[0]=0;
+
+  // Bubble sort alphabetically. ESC and CAP will move to the front.
+  for (int i=255; i>=0; --i) {
+    for (int j=0; j<i; ++j) {
+      if (less(dict2[j+1], dict2[j])) {
+        Element t=dict2[j];
+        dict2[j]=dict2[j+1];
+        dict2[j+1]=t;
+      }
+    }
+  }
+
+  // Build index for fast lookup.
+  // idx[c] = location of first word in dict2 starting with c
+  // or 256 if not found.
+  //int idx[256];
+  for (int i=0; i<256; ++i)
+    idx[i]=256;
+  for (int i=256; i>=0; --i)
+    if (dict2[i].s[0])
+      idx[dict2[i].s[1]]=i;
+
+  // Write output header
+  esc=0;
+  cap=1;
+  upper=2;
+  put(esc);
+  put(cap);
+  put(upper);
+  for (int i=0; i<256; ++i) {
+    for (int j=0; j<=dict2[i].s[0]; ++j)
+      put(dict2[i].s[j]);
+  }
+  inpos=0;
+  slen=0;
+}
+
+// Encode from in to buf until end of input or buf is not empty
+void WBPE::fill() {
+  while ((wpos+2)<BUFSIZE && inpos<n) {
+    // fill input buffer ins
+    while (slen<LEN)
+      ins[slen++]=in[inpos++];
+    if (slen<1)
+      break;
+
+    // Find longest match in dict2. Try both upper and lower case.
+    int bi=256, bestmatch=0, bestmode=ESC, mode=ESC;
+    for (int i=0; i<=32; i+=32) {
+      for (int j=idx[ins[0]^i]; j<256 && dict2[j].s[0]>0
+           && dict2[j].s[1]==(ins[0]^i); ++j) {
+        if (dict2[j].s[0]<=slen && dict2[j].s[0]>bestmatch
+            && (mode=match(ins, dict2[j].s+1, dict2[j].s[0]))!=ESC) {
+          bestmatch=dict2[j].s[0];
+          bi=j;
+          bestmode=mode;
+        }
+      }
+    }
+
+    // Encode match
+    if (bi<256) {
+      if (bestmode==CAP) put(cap);
+      if (bestmode==UPPER) put(upper);
+      put(bi);
+      slen-=bestmatch;
+    }
+    else {  // encode escaped literal
+      bestmatch=1;
+      put(esc);
+      put(ins[0]);
+      --slen;
+    }
+    if (slen>0) memmove(ins, ins+bestmatch, slen);
+  }
+}
+
 // Generate a config file from the method argument with syntax:
 // {0|x|s|i}[N1[,N2]...][{ciamtswf<cfg>}[N1[,N2]]...]...
 std::string makeConfig(const char* method, int args[]) {
@@ -6914,14 +7272,91 @@ std::string makeConfig(const char* method, int args[]) {
 
   // Generate the postprocessor
   std::string hdr, pcomp;
-  const int level=args[1]&3;
+   int level=args[1]&3;
   const bool doe8=args[1]>=4 && args[1]<=7;
   const bool dobmp = args[1] == 8;
   const bool doppm = args[1] == 9;
   const bool dotext = args[1] == 10;
   const bool dobmp8 = args[1] == 11;
   const bool dopgm = args[1] == 12;
-  if (dobmp8 || dopgm ){
+  const bool wbpe = args[1] == 13;
+
+  if (wbpe) {
+  level=4;
+    hdr="comp 9 16 0 16 ";
+      pcomp=
+      "pcomp wbpe c ; (c - capital, e - no capital)\n"
+      "    a> 255 ifnotl\n"
+      "        d=a \n"
+      "        a=r 3\n"
+      "        (read header)\n"
+      "        a< 4 if\n"
+      "            a== 0 if\n"
+      "                a=d r=a 4 a= 1 r=a 3           (esc)\n"
+      "            else \n"
+      "                a== 1 if\n"
+      "                    a=d r=a 5 a= 2 r=a 3       (cap) \n"
+      "                else \n"
+      "                    a== 2 if\n"
+      "                        a=d r=a 6 a= 3 r=a 3   (upper)\n"
+      "                    else\n"
+      "                        a=c b=r 2 a+=b b=a *b=d           (dict[r1*256+r2]=d)\n"
+      "                        d=*c                              (string lenght)\n"
+      "                        a=r 2 a==d if                     (r2==dict[r1*256])\n"
+      "                            a=r 1 a++ r=a 1 a=0 r=a 2     (r2=0, r1++)\n"
+      "                            a=r 1 a<<= 8 c=a              (c=dict[r1*256])\n"
+      "                        else \n"
+      "                            a++ r=a 2\n"
+      "                        endif\n"
+      "                        a=r 1 a> 255 if \n"
+      "                            a= 4 r=a 3 a= 1 r=a 1          (header done)\n"
+      "                        endif \n"
+      "                    endif \n"
+      "                endif \n"
+      "            endif \n"
+      "            halt\n"
+      "        endif\n"
+      "        (decode file)\n"
+      "        a=r 1 a== 2 if               (ESC)\n"
+      "            a=d out  a= 1 r=a 1      (out char, set TEXT=1)\n"
+      "            halt\n"
+      "        endif\n"
+      "        a=d\n"
+      "        b=r 4 a==b if                (mode ESC=2)\n"
+      "           a= 2 r=a 1\n"
+      "        else\n"
+      "            b=r 5 a==b if            (mode CAP=3) \n"
+      "              a= 3 r=a 1\n"
+      "            else\n"
+      "                b=r 6 a==b if        (mode UPPER=4)\n"
+      "                    a= 4 r=a 1\n"
+      "                else\n"
+      "                    a=d a<<= 8 r=a 9 (r3=char*256) \n"
+      "                    a++ r=a 7        (r7=r9+1 (string start))\n"
+      "                    c=r 9 a=*c       (string lenght)\n"
+      "                    b=r 7 a+=b r=a 8 (r8 (string end))\n"
+      "                    b=r 7\n"
+      "                    do                  (out string )\n"
+      "                        a=r 1 a== 1 if  (TEXT?)  \n"
+      "                           a=*b \n"
+      "                        else \n"
+      "                           a=*b a^= 32  \n"
+      "                        endif\n"
+      "                        b++ out\n"
+      "                        a=r 1 a== 3 if  (CAP? to TEXT)\n"
+      "                           a= 1 r=a 1\n"
+      "                        endif\n"
+      "                        a=b c=r 8\n"
+      "                    a<c while\n"
+      "                    a= 1 r=a 1\n"
+      "                endif\n"
+      "            endif\n"
+      "        endif\n"
+      "    endif   \n"
+      "    halt\n"
+      "end";
+  }
+  else if (dobmp8 || dopgm ){
      hdr="comp 17 17 0 3 19 (hh hm ph pm n)\n"
           "0 const 160\n"
           "1 cm 20 255\n"
@@ -7052,7 +7487,6 @@ std::string makeConfig(const char* method, int args[]) {
         // text model
         const bool dobrackets = args[2] == 1;
         int blev =(args[0]>=7?2:(args[0]==6?1:0))+1;
-        //if (dobrackets==true) printf("Brackets enabled\n");
      hdr="comp 10 9 0 0 "+ itos(22+ (dobrackets==true?1:0)) +"\n"
           "  0 const 158\n"
           "  1 icm 5\n"
@@ -7108,6 +7542,10 @@ std::string makeConfig(const char* method, int args[]) {
           "  a+= 255\n"
           "  b=a a=*c a+=b a++ d=a b=*d\n"
           "  a=r 1 a<<= 2 a+=b r=a 1      (b2stream=r1=(r1<<2)+map[byte] stream of 2 bit chars)\n"
+          "  a=*c a== 39 if a=r 1 a<<= 2 r=a 1 endif         (')\n"
+          "  a=*c a== 34 if a=r 1 a<<= 2 r=a 1 endif         (\")\n"
+          "  a=*c a== 124 if a=r 1 a<<= 2 r=a 1 endif        (|)\n"
+          "  a=*c a== 10 if a=r 1 a<<= 2 a|= 252 r=a 1 endif (LF)\n"
           "  a=r 2 a<<= 1 r=a 2           (words<<1)\n"
           "  b=c a=0\n"
           "  b-- a=*b b++ a== 10 if a=*b r=a 8  endif a=0 (r2=firstchar)\n"
@@ -7757,6 +8195,8 @@ std::string makeConfig(const char* method, int args[]) {
     else
       pcomp="end\n";
   }
+  else if (level==4)
+  /*printf("WBPE\n")*/;
   else
     error("Unsupported method");
   
@@ -7768,7 +8208,7 @@ std::string makeConfig(const char* method, int args[]) {
   // R1 = level 2 lz77 1+bytes expected until next code, 0=init
   // R2 = level 2 lz77 first byte of code
   int ncomp=0;  // number of components
-  const int membits=args[0]+20;
+  int membits=args[0]+20;
   int sb=5;  // bits in last context
   std::string comp;
   std::string hcomp="hcomp\n"
@@ -7808,7 +8248,7 @@ std::string makeConfig(const char* method, int args[]) {
         }
       }
     }
-
+    if (v[0]=='h') membits=membits-1;
     // c: context model
     // N1%1000: 0=ICM 1..256=CM limit N1-1
     // N1/1000: number of times to halve memory
@@ -8038,7 +8478,8 @@ std::string makeConfig(const char* method, int args[]) {
       }
       hcomp+=" a= 0 a-- a>>= "+itos(32-v[2])+" b=a a=r 13 a>>= "+itos(v[3])+" a&=b hashd\n";
       ++ncomp;
-      hdr="comp 11 16 0 0 ";
+     if (level==4) hdr="comp 11 16 0 16 "; // wbpe
+     else hdr="comp 11 16 0 0 ";
     }
   }
 
@@ -8192,37 +8633,13 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
 
     // LZ77+CM, fast CM, or BWT depending on type
     else if (level==4) {
-      if (special==IM24_PPM ||  special==IM24_BMP)
-        method+=",c0."+itos(3)+".255i2c0.0.511."+itos(info-2+1000)+".255n1,8,0,3,1"+(files?"a192":"")+"m11,24,3";
-      else if (special==IM1_PBM || special==IM1_BMP)   // 1 bit
-        method+=",c0.0.7."+itos(info-2+1000)+".255i2m1";
-      else if (special==IM8_PGM || special==IM8_BMP) {
-           if (type<600) method+=",c0.0.255."+itos(info-2+1000)+".255c0.0.255."+itos(info*2-2+1000)+".255t8s16,20,255,"+itos(info-2);    // 8 bit bmp pgm slow!
-           else method+="c0.0.255."+itos(info-2+1000)+".255s16,20,255,"+itos(info-2);
-      } else if (special==IM4_BMP) {  // 4 bit
-           if (type<600) method+=",c0.0.15." + itos(info-2+1000)+".255i2n0,4,0,1,0m16,10";
-           else method+="c0.0.15." + itos(info-2+1000)+".255n0,4,0,1,0t0s16,24,255," + itos(info-2);
-      } else if (special==IM32_BMP)   // 32 bit
-        method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16,24,255,3";
-      else if (special==IM_JPG)
-        method+=",c0.0.15.255i2,1n1,1,0,1,0"; //n0,1,0,1,0"c0.0.7.255i2,1s16,18,63";
-        else if (special==IM_AVI)
-          method+=",c0.0.15.255i2,1n1,1,0,1,0";//n0,1,0,1,0
-      else if (type<20)
-        method+=",0";
-      else if (type<24)
-        method+=","+itos(1+doe8)+",4,0,3"+htsz;
-      else if (type<48)
-        method+=","+itos(2+doe8)+",5,0,7"+sasz+"1c0,0,511";
-      else if (type<900) {
-        method+=","+itos(doe8);
-        if (type&1) { //text
+        bool doIndirect=false;
+      if (((type&1) ||  (info&255)>240) && special==0) { //text
             if (type>100) {
                 // Test if we can use indirect model
                 // most text files will have lg o1/o2 >=8, except book1, dickens.
                 // Some binary files also have lg o1/o2 >=8, compressed files will mostly be below 6.
-                // If we can use then drop one word model and one ISSE order x model
-                // and use indirect o2 ISSE model on top of word0 model
+
                 unsigned int t[256]={0};
                 unsigned int t2[0x10000]={0};
                 int m[256]={0};
@@ -8254,7 +8671,59 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
                     if (m2[j]>0)avg=avg+m2[j],count++;
                 }
                 int lgo2=lg(avg/count);
-                if (lgo1>8 && lgo2>=8)
+                if (lgo1>8 && lgo2>=8  ||lgo1>=8 && lgo1>lgo2*2 && lgo2>6 )
+                    doIndirect=true;
+                   // printf("Indirect %d %d\n",lgo1,lgo2);
+                
+                // Test for brackets
+         /* int br[256]={0};
+          int bopen=0,bclose=0;
+          br['(']=1; br['[']=1; br['{']=1; br['<']=1;
+          br[')']=2; br[']']=2; br['}']=2; br['>']=2;
+          //const unsigned char* p=in->data();
+          for (unsigned i=0; i<n; ++i) {
+             if (br[p[i]]==1) bopen++;
+             else if (br[p[i]]==2) bclose++;
+          }
+          int brackets=( (lg(n)/2)< ((lg(bopen)+lg(bclose))>>1) )?1:0;
+          if (brackets){
+              printf("brackets %d %d\n",(lg(n)/2), ((lg(bopen)+lg(bclose))>>1));
+          }*/
+            }
+      }
+      if (special==IM24_PPM ||  special==IM24_BMP)
+        method+=",c0."+itos(3)+".255i2c0.0.511."+itos(info-2+1000)+".255n1,8,0,3,1"+(files?"a192":"")+"m11,24,3";
+      else if (special==IM1_PBM || special==IM1_BMP)   // 1 bit
+        method+=",c0.0.7."+itos(info-2+1000)+".255i2m1";
+      else if (special==IM8_PGM || special==IM8_BMP) {
+           if (type<600) method+=",c0.0.255."+itos(info-2+1000)+".255c0.0.255."+itos(info*2-2+1000)+".255t8s16,20,255,"+itos(info-2);    // 8 bit bmp pgm slow!
+           else method+="c0.0.255."+itos(info-2+1000)+".255s16,20,255,"+itos(info-2);
+      } else if (special==IM4_BMP) {  // 4 bit
+           if (type<600) method+=",c0.0.15." + itos(info-2+1000)+".255i2n0,4,0,1,0m16,10";
+           else method+="c0.0.15." + itos(info-2+1000)+".255n0,4,0,1,0t0s16,24,255," + itos(info-2);
+      } else if (special==IM32_BMP)   // 32 bit
+        method+=",c0."+itos(3+7-6)+".255i2,"+itos(2+7-6)+","+itos(2+7-6)+"c0.0.511."+itos(info-2+1000)+".255m11,24,3s16,24,255,3";
+      else if (special==IM_JPG)
+        method+=",c0.0.15.255i2,1n1,1,0,1,0"; //n0,1,0,1,0"c0.0.7.255i2,1s16,18,63";
+        else if (special==IM_AVI)
+          method+=",c0.0.15.255i2,1n1,1,0,1,0";//n0,1,0,1,0
+      else if (type<20)
+        method+=",0";
+      else if (type<24)
+        method+=","+itos(1+doe8)+",4,0,3"+htsz;
+      else if (type<48)
+        method+=","+itos(2+doe8)+",5,0,7"+sasz+"1c0,0,511";
+      else if (type>480 && type<900 && ((type&1) || (info&255)>240) && special==0 && doIndirect) {
+        method+=","+itos(13); // WBPE
+        method+="ci2,3,2n1,24,8,3,1a24,1,1ts16,20,255";
+        printf("WBPE\n");
+      } else if (type<900) {
+        method+=","+itos(doe8);
+        if (type&1) { //text
+            if (type>100) {
+                // If we can use Indirect then drop one word model and one ISSE order x model
+                // and use indirect o2 ISSE model on top of word0 model
+                if (doIndirect)
                     method+="c256.0.255i2,1,3aw1,65,26,223,191,0n1,24,8,1,1";
                 else
                     method+="c256.0.255i2,1,1,2aw2,65,26,223,191,0";
@@ -8306,7 +8775,6 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
         }
         method+=","+itos(3+doe8)+"ci"+itos(1+lowP);
       }
-       
     }
     // Slow CM with lots of models
     else {  // 5..9
@@ -8432,6 +8900,11 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
   if (args[1]>=1 && args[1]<=7 && args[1]!=4) {  // LZ77 or BWT
     LZBuffer lz(*in, args);
     co.setInput(&lz);
+    co.compress();
+  }
+  else if (args[1]==13) {  // WBPE
+    WBPE wbpe(*in, args);
+    co.setInput(&wbpe);
     co.compress();
   }
   else {  // compress with e8e9 or no preprocessing

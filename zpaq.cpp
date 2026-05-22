@@ -1,6 +1,6 @@
 // zpaq.cpp - Journaling incremental deduplicating archiver
 
-#define ZPAQ_VERSION "7.15.6f"
+#define ZPAQ_VERSION "7.15.7f"
 /*
   This software is provided as-is, with no warranty.
   I, Matt Mahoney, release this software into
@@ -2478,12 +2478,11 @@ int Jidac::add() {
   libzpaq::Array<char> fragbuf(MAX_FRAGMENT);
   vector<unsigned> blocklist;  // list of starting fragments
   std::string pext="",ext="";
-
+  const int BUFSIZE=4096*16;  // input buffer 64k
+  libzpaq::Array<char> buf(BUFSIZE);
   // For each file to be added
   for (unsigned fi=0; fi<=vf.size(); ++fi) {
     FP in=FPNULL;
-    const int BUFSIZE=4096;  // input buffer
-    char buf[BUFSIZE];
     int bufptr=0, buflen=0;  // read pointer and limit
     int64_t infSize = 0;
     pext=ext;
@@ -2536,9 +2535,9 @@ int Jidac::add() {
         libzpaq::SHA1 sha1;
         assert(in!=FPNULL);
         while (true) {
-          if (bufptr>=buflen) bufptr=0, buflen=fread(buf, 1, BUFSIZE, in);
+          if (bufptr>=buflen) bufptr=0, buflen=fread(&buf[0], 1, BUFSIZE, in);
           // detect BMP 1,4,8,24 bit at level 3 and up
-          if (level>2 && bufptr==0 && pfState==IM_NONE) {
+          if (level>2 && fsize==0 && bufptr==0 && pfState==IM_NONE) {
            if (isFBMP==true && buflen==BUFSIZE) {
               zpBMFILEHEADER &bmHdr=(zpBMFILEHEADER&)buf;
               zpBMOSFILEHEADER &bmHdr1=(zpBMOSFILEHEADER&)buf;
@@ -2669,7 +2668,6 @@ int Jidac::add() {
             else h=(h+c+1)*271828182u;
             o1[c1]=c;
             c1=c;
-            sha1.put(c);
             fragbuf[sz++]=c;
           }
           if (c==EOF
@@ -2679,7 +2677,8 @@ int Jidac::add() {
         }
         assert(sz<=MAX_FRAGMENT);
         total_done+=sz;
-
+        // 
+        sha1.write(&fragbuf[0], sz);
         // Look for matching fragment
         assert(uint64_t(sz)==sha1.usize());
         memcpy(sha1result, sha1.result(), 20);
