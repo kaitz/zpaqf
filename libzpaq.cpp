@@ -7375,7 +7375,7 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
     in(inbuf.data()),
     n(inbuf.size()),
     i(0),
-    rpos(0), wpos(0),level(args[2]),dictSize((1 <<lg((1 <<args[0])*1024*1024))/2),
+    rpos(0), wpos(0),level(args[2]),dictSize((1<<lg((1<<args[0])*1024*1024))/2),
     lc(args[3]),lp(args[4]),pb(args[5]),fb(args[6]) {
   assert(args[0]>=0);
   assert(lc>=0  && lc<=8);
@@ -7384,33 +7384,33 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
   assert(fb>=5 && fb<=273);
   assert(n<=(1u<<20<<args[0]));
   if (dictSize<0x10000) dictSize=0x10000; // 64kb
+  /*int lplc=(1<<(lc+lp));
+  printf("Level: %d Dict: %d Parms: lc %d lp %d pb %d  fb %d state %dkb\n",level,dictSize,lc,lp,pb,fb,(4+lplc+lplc/2));*/
   CompressLZMA();
 }
 
 // Encode from in to buf until end of input or buf is not empty
 void LZMA::CompressLZMA() {
-  size_t propsSize = LZMA_PROPS_SIZE;
-  size_t destLen = n + n / 3 + 128;
-  outb.resize(propsSize+ 8 + destLen); 
-  /*printf("LZMA dict %d\n",dictSize);
-  printf("LZMA level %d\n",level);*/
+  size_t propsSize=LZMA_PROPS_SIZE;
+  size_t destLen=n+n/3+128;
+  outb.resize(propsSize+8+destLen); 
   int res = LzmaCompress(
     &outb[LZMA_PROPS_SIZE+8], &destLen,
     &in[0], n,
     &outb[0], &propsSize,
     level, dictSize, lc, lp, pb, fb, -1);
   
-  assert(propsSize == LZMA_PROPS_SIZE);
-  if (res == SZ_ERROR_MEM) error("LZMA - Memory allocation error");
-  else if (res == SZ_ERROR_PARAM) error("LZMA - Incorrect paramater");
-  else if (res == SZ_ERROR_OUTPUT_EOF) error("LZMA - output buffer overflow");
-  else if (res == SZ_ERROR_THREAD) error("LZMA - multithreading error");
-  else if (res != SZ_OK) error("LZMA - error");
+  assert(propsSize==LZMA_PROPS_SIZE);
+  if (res==SZ_ERROR_MEM) error("LZMA - Memory allocation error");
+  else if (res==SZ_ERROR_PARAM) error("LZMA - Incorrect paramater");
+  else if (res==SZ_ERROR_OUTPUT_EOF) error("LZMA - output buffer overflow");
+  else if (res==SZ_ERROR_THREAD) error("LZMA - multithreading error");
+  else if (res!=SZ_OK) error("LZMA - error");
   
   int64_t flen=n;
-  for (int i = 0; i < 8; i++)
-      outb[i+LZMA_PROPS_SIZE]=(unsigned char)(flen >> (8 * i));
-  outb.resize(propsSize+ 8 + destLen);
+  for (int i=0; i<8; i++)
+      outb[i+LZMA_PROPS_SIZE]=(unsigned char)(flen>>(8*i)); //add file size so the decoder knows explicitly when the data ends
+  outb.resize(propsSize+8+destLen);
   wpos=outb.size();
 }
 
@@ -7462,8 +7462,11 @@ std::string makeConfig(const char* method, int args[]) {
       if (args[3]>9 || args[3]<0) args[3]=3;    // lc 0-8
       if (args[4]>4 || args[4]<0) args[4]=0;    // lp 0-4
       if (args[5]>4 || args[5]<0) args[5]=2;    // pb 0-4
-      if (args[6]>273 || args[6]<0) args[6]=32;  // fb 5-273
-      hdr="comp 0 0 26 16 ";
+      if (args[6]>273 || args[6]<0) args[6]=32; // fb 5-273
+      int lclp=(1<<(args[3]+args[4]));
+      lclp=(4+lclp+lclp/2);
+      int state=lg(lclp*1024);
+      hdr="comp 0 0 "+itos(state)+" "+itos(lg((1 <<args[0])*1024*1024)+0)+" "; // set ph pm values
       pcomp=
       "pcomp lzmab.bat c ; (c - ignored)\n"
       "(\n"
@@ -9192,7 +9195,7 @@ std::string makeConfig(const char* method, int args[]) {
     }
     
   }
-  if (level==5) hdr="comp 0 0 16 "+itos(lg((1 <<args[0])*1024*1024)+0)+" ",hcomp="hcomp \n"; // lzma, set block size for dict
+  if (level==5) hcomp="hcomp \n"; // lzma
 
   return hdr+itos(ncomp)+"\n"+comp+hcomp+"halt\n"+pcomp;
   
@@ -9299,8 +9302,8 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
           method+=",c0.0.15.255i2n1,1,0,1,0";//n0,1,0,1,0
       else if (type<21)  // store if not compressible 20?
         method+=",0";
-      else if (type<48)  // faster LZMA if barely compressible
-         method+=",14,4";
+      else if (type<60)  // faster LZMA if barely compressible
+         method+=",14,5,5,0,0,128";
       else if (type>=640 || (type&1)) {  // BWT if text or highly compressible
         int lowP=0;
         if ((type&1)==0) {
@@ -9342,7 +9345,12 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       else  // LZ77 with O0-1 compression of up to 12 literals
         //method+=","+itos(2+doe8)+",12,0,7"+sasz+",1c0,0,511i2s8,32,65";
         //else if (type<100*4)  // lzma
-        method+=",14,7";
+        if (doe8)
+            method+=",14,7,5,0,2,128";
+        else  if (type>=440)
+            method+=",14,7,8,0,1,128";
+        else
+            method+=",14,7,3,0,2,64";
     }
 
     // LZ77+CM, fast CM, or BWT depending on type
