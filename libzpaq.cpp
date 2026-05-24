@@ -7375,9 +7375,10 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
     in(inbuf.data()),
     n(inbuf.size()),
     i(0),
-    rpos(0), wpos(0),level(args[2]),dictSize((1<<lg((1<<args[0])*1024*1024))/2),
+    rpos(0), wpos(0),level(args[2]/2),dictSize((1<<lg((1<<args[0])*1024*1024))/2),
     lc(args[3]),lp(args[4]),pb(args[5]),fb(args[6]) {
   assert(args[0]>=0);
+  assert(level>=0  && level<=9);
   assert(lc>=0  && lc<=8);
   assert(lp>=0  && lp<=4);
   assert(pb>=0  && pb<=4);
@@ -7385,7 +7386,9 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
   assert(n<=(1u<<20<<args[0]));
   if (dictSize<0x10000) dictSize=0x10000; // 64kb
   /*int lplc=(1<<(lc+lp));
-  printf("Level: %d Dict: %d Parms: lc %d lp %d pb %d  fb %d state %dkb\n",level,dictSize,lc,lp,pb,fb,(4+lplc+lplc/2));*/
+  printf("Level: %d Dict: %d Parms: lc %d lp %d pb %d  fb %d state %dkb. Exe %d\n",level,dictSize,lc,lp,pb,fb,(4+lplc+lplc/2),args[2]&1);*/
+  // e8e9 transform
+  if (args[2]&1) e8e9(inbuf.data(), n);
   CompressLZMA();
 }
 
@@ -7458,18 +7461,19 @@ std::string makeConfig(const char* method, int args[]) {
 
   if (lzma) {
       level=5;
-      if (args[2]>9 || args[2]<0) args[2]=5;    // lzma level
+      if (args[2]>9 || args[2]<0) args[2]=5;    // LZMA level
       if (args[3]>9 || args[3]<0) args[3]=3;    // lc 0-8
       if (args[4]>4 || args[4]<0) args[4]=0;    // lp 0-4
       if (args[5]>4 || args[5]<0) args[5]=2;    // pb 0-4
       if (args[6]>273 || args[6]<0) args[6]=32; // fb 5-273
+      args[2]=args[2]*2+args[7]; // level*2+doe8
       int lclp=(1<<(args[3]+args[4]));
       lclp=(4+lclp+lclp/2);
       int state=lg(lclp*1024);
       hdr="comp 0 0 "+itos(state)+" "+itos(lg((1 <<args[0])*1024*1024)+0)+" "; // set ph pm values
       pcomp=
-      "pcomp lzmab.bat c ; (c - ignored)\n"
-      "(\n"
+      "pcomp lzma c ;\n"
+      /*"(\n"
       "hm:\n"
       "    dictionary - 64M\n"
       "    compressed data - up to 64M\n"
@@ -7511,7 +7515,7 @@ std::string makeConfig(const char* method, int args[]) {
       "    p3        r[34]  prob *\n"
       "    dict      r[35]  size / compressed data start - unused\n"
       "    cdata     r[36]  compressed data pos\n"
-      ")\n"
+      ")\n"*/
       "    *c=a c++ \n"
       "    d=a\n"
       "        a=r 24 (hdr state - 0 read header, 1 read data, 2 decode, 3 fail/end)\n"
@@ -7531,7 +7535,7 @@ std::string makeConfig(const char* method, int args[]) {
       "                    a+=b a+=b a+= 4 r=a 29          (val4=1332)\n"
       "                    a+=b a+=b a+= 175 r=a 28        (val3=2017)\n"
       "                    a= 1 a<<= 16 a-- r=a 25         (mask=0xffff prob)\n"
-      "                                                    (parse hdr)\n"
+      /*"                                                    (parse hdr)\n"*/
       "                    c=0\n"
       "                    a=*c a/= 9 r=a 6                (pb = a / 9)    \n"
       "                    a=*c a%= 9 r=a 4                (lc = a % 9)\n"
@@ -7541,13 +7545,13 @@ std::string makeConfig(const char* method, int args[]) {
       "                       a= 3 r=a 24 (fail)\n"
       "                       halt\n"
       "                    endif\n"
-      "\n"
+      /*"\n"*/
       "                    a=c a+= 4 c=a  a=0              (dict size)\n"
       "                    a+=*c a<<= 8 c-- a+=*c a<<= 8\n"
       "                    c-- a+=*c a<<= 8 c-- a+=*c c--\n"
       "                    r=a 23\n"
       "                    a=c a+= 4 c=a\n"
-      "\n"
+      /*"\n"*/
       "                    a=c a+= 8 c=a a=0               (max size)\n"
       "                    a+=*c a<<= 8 c-- a+=*c a<<= 8\n"
       "                    c-- a+=*c a<<= 8 c-- a+=*c c--\n"
@@ -7555,13 +7559,13 @@ std::string makeConfig(const char* method, int args[]) {
       "                    c-- a+=*c a<<= 8 c-- a+=*c c--\n"
       "                    r=a 22                          (-1 if stream has EOF)\n"
       "                    a=c a+= 8 c=a\n"
-      "\n"
+      /*"\n"*/
       "                    a=0 c++ a=*c                    (flag)\n"
       "                    a> 0 if                 \n"
       "                        a= 3 r=a 24                 (fail)\n"
       "                        halt\n"
       "                    endif\n"
-      "\n"
+      /*"\n"*/
       "                    a=0                             (code)  \n"
       "                    a+=*c c++ a<<= 8 a+=*c c++ a<<= 8\n"
       "                    a+=*c c++ a<<= 8 a+=*c c++ a<<= 8\n"
@@ -7581,13 +7585,13 @@ std::string makeConfig(const char* method, int args[]) {
       "                    do                              ( clear pm )\n"
       "                        *c=0 c++ a++\n"
       "                    a< 18 while)\n"
-      "\n"
+      /*"\n"*/
       "                    a= 1 r=a 24                     ( next state - read compressed data )\n"
       "                    a=r 23 c=a                      ( set after dict)\n"
       "                    r=a 36\n"
       "                    halt\n"
       "                endif\n"
-      "                                                    (end state==0)\n"
+      /*"                                                    (end state==0)\n"*/
       "            elsel \n"
       "                a=d   \n"
       "                a> 255 a=r 24 if\n"
@@ -7604,12 +7608,12 @@ std::string makeConfig(const char* method, int args[]) {
       "        a== 2 ifnot                                 (not decode - fail) \n"
       "            halt \n"
       "        endif\n"
-      "        (main decode loop)\n"
+      /*"        (main decode loop)\n"*/
       "        do\n"
       "            a=0 r=a 15                                    (r[15] = 0)\n"
       "            b=r 6  a=r 21 a&=b r=a 18                     (r[18] = r[21] & r[6])\n"
       "            a=r 13 a*= 16 b=r 18 a+=b r=a 34 d=a          (p3 = r[13] * 16 + r[18])\n"
-      "                                                          (decode bit)\n"
+      /*"                                                          (decode bit)\n"*/
       "            a=r 7 a>>= 24 a== 0 if                        (if ((r[7] >> 24)==0))\n"
       "                a=r 7 a<<= 8 r=a 7                        (r[7] <<= 8)\n"
       "                a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
@@ -7624,7 +7628,7 @@ std::string makeConfig(const char* method, int args[]) {
       "                a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8         (r[7]-= r[10], r[8]-= r[10])\n"
       "            endif\n"
       "            a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p3 = r[9]-(r[11] >> 5))\n"
-      "                                                          (decode bit end)\n"
+      /*"                                                          (decode bit end)\n"*/
       "            a=r 14\n"
       "            a> 0 ifl                                      (if (r[14]) )\n"
       "                b=r 5 a=r 21 a&=b                         (r[18] = r[21] & r[5])\n"
@@ -7642,7 +7646,7 @@ std::string makeConfig(const char* method, int args[]) {
       "                    a=r 16 a<<= 1 r=a 16                  (r[16] <<= 1)\n"
       "                    b=r 19 d=b a&=b b=r 12 a+=b b=d a+=b\n"
       "                    b=r 34 a+=b r=a 33 d=a                (p1 = p3 + r[19] + (r[16] & r[19]) + r[12])\n"
-      "                                                          (decode bit)\n"
+      /*"                                                          (decode bit)\n"*/
       "                    a=r 7 a>>= 24 a== 0 if                (if ((r[7] >> 24)==0) )\n"
       "                        a=r 7 a<<= 8 r=a 7                (r[7] <<= 8)\n"
       "                        a=r 8 a<<= 8 c=r 36 a|=*c c++ \n"
@@ -7657,7 +7661,7 @@ std::string makeConfig(const char* method, int args[]) {
       "                        a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
       "                    endif\n"
       "                    a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
-      "                                                           (decode bit end)\n"
+      /*"                                                           (decode bit end)\n"*/
       "                    a=r 12 a<<= 1 r=a 12                   (r[12] <<= 1)\n"
       "                    a=r 14 a== 1 b=r 16 a=r 19 if          (if (r[14]) )\n"
       "                        a&~b r=a 19                        (r[19] &=~r[16])\n"
@@ -7679,7 +7683,7 @@ std::string makeConfig(const char* method, int args[]) {
       "                a=r 21 a++ r=a 21\n"
       "                a=r 12 a&= 255 r=a 12                      (r[12] &= 255)\n"
       "                b=r 20 *b=a b++ a=b r=a 20                 (r[21]++ dict[r[20]++] = r[12])\n"
-      "                b=r 23\n"
+      /*"                (b=r 23\n"
       "                a==b if                                    (if (r[20] == r[23]) )\n"
       "                    b=0 d=r 20                             (output dictionary to file)\n"
       "                    do     \n"
@@ -7687,11 +7691,11 @@ std::string makeConfig(const char* method, int args[]) {
       "                      a=b\n"
       "                     a<d while\n"
       "                    a=0 r=a 20                             (r[20] = 0)\n"
-      "                endif\n"
+      "                endif)\n"*/
       "            elsel\n"
       "                a=r 13 a+= 192 r=a 33  d=a                 (p1 = 192 + r[13])\n"
       "                a=r 13 a< 7 if a=0 else a= 3 endif r=a 13  (r[13] = r[13] < 7 ? 0 : 3)\n"
-      "                                                           (decode bit)\n"
+      /*"                                                           (decode bit)\n"*/
       "                a=r 7 a>>= 24 a== 0 if                     (if ((r[7] >> 24)==0) )\n"
       "                    a=r 7 a<<= 8 r=a 7                     (r[7] <<= 8)\n"
       "                    a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
@@ -7706,14 +7710,14 @@ std::string makeConfig(const char* method, int args[]) {
       "                    a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
       "                endif\n"
       "                a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
-      "                                                           (decode bit end)\n"
-      "            \n"
+      /*"                                                           (decode bit end)\n"
+      "            \n"*/
       "                a=r 14 a> 0 ifl                            (if (r[14]) )\n"
       "                    a=r 2 r=a 3 a=r 1 r=a 2 a=r 0 r=a 1    (r[3] = r[2] r[2] = r[1] r[1] = r[0])\n"
       "                    a=r 30 r=a 33                          (p1 = r[30])\n"
       "                elsel\n"
       "                    a=r 33 a+= 12 r=a 33  d=a              (p1 += 12)\n"
-      "                                                           (decode bit)\n"
+      /*"                                                           (decode bit)\n"*/
       "                    a=r 7 a>>= 24 a== 0 if                 (if ((r[7] >> 24)==0) )\n"
       "                        a=r 7 a<<= 8 r=a 7                 (r[7] <<= 8)\n"
       "                        a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
@@ -7728,10 +7732,10 @@ std::string makeConfig(const char* method, int args[]) {
       "                        a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
       "                    endif\n"
       "                    a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
-      "                                                           (decode bit end)\n"
+      /*"                                                           (decode bit end)\n"*/
       "                    a=r 14 a> 0 ifl                        ( if (r[14]) )\n"
       "                        a=r 34 a+= 240 r=a 34 d=a          (p3 += 240)\n"
-      "                                                           (decode bit)\n"
+      /*"                                                           (decode bit)\n"*/
       "                        a=r 7 a>>= 24 a== 0 if             (if ((r[7] >> 24)==0) )\n"
       "                            a=r 7 a<<= 8 r=a 7             (r[7] <<= 8)\n"
       "                            a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
@@ -7747,10 +7751,10 @@ std::string makeConfig(const char* method, int args[]) {
       "                            a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
       "                        endif\n"
       "                        a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p3 = r[9] - (r[11] >> 5))\n"
-      "                                                            (decode bit end)\n"
+      /*"                                                            (decode bit end)\n"*/
       "                    elsel\n"
       "                        a=r 33 a+= 12 r=a 33 d=a            (p1 += 12)\n"
-      "                                                            (decode bit)\n"
+      /*"                                                            (decode bit)\n"*/
       "                        a=r 7 a>>= 24 a== 0 if              (if ((r[7] >> 24)==0) )\n"
       "                            a=r 7 a<<= 8 r=a 7              (r[7] <<= 8)\n"
       "                            a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
@@ -7766,10 +7770,10 @@ std::string makeConfig(const char* method, int args[]) {
       "                            a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
       "                        endif\n"
       "                        a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
-      "                                                            (decode bit end)\n"
+      /*"                                                            (decode bit end)\n"*/
       "                        a=r 14 a== 0 ifl                    (if (r[14]==0) )\n"
       "                            a=r 33 a+= 12 r=a 33 d=a        (p1 += 12)\n"
-      "                                                            (decode bit)\n"
+      /*"                                                            (decode bit)\n"*/
       "                            a=r 7 a>>= 24 a== 0 if          (if ((r[7] >> 24)==0) )\n"
       "                                a=r 7 a<<= 8 r=a 7          (r[7] <<= 8)\n"
       "                                a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
@@ -7786,7 +7790,7 @@ std::string makeConfig(const char* method, int args[]) {
       "                                a=r 3 r=a 17 a=r 2 r=a 3     (r[17] = r[3], r[3] = r[2])\n"
       "                            endif\n"
       "                            a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
-      "                                                            (decode bit end)\n"
+      /*"                                                            (decode bit end)\n"*/
       "                            a=r 1 r=a 2                     (r[2] = r[1])\n"
       "                        endif\n"
       "                        a=r 0 r=a 1 a=r 17 r=a 0            (r[1] = r[0] r[0] = r[17])\n"
@@ -7797,11 +7801,11 @@ std::string makeConfig(const char* method, int args[]) {
       "                        a=r 13 a|= 9 r=a 13\n"
       "                    endif\n"
       "                endif\n"
-      "            \n"
+      /*"            \n"*/
       "                a=r 15 a== 0 ifl                            (if (r[15]==0) )\n"
       "                    a= 2 r=a 15 a= 8 r=a 17                 (r[15] = 2 r[17] = 8)\n"
       "                    b=r 18 a*=b a+= 2 b=r 33 a+=b r=a 34    (p3 = p1 + r[18] * 8 + 2)\n"
-      "                                                            (decode bit)\n"
+      /*"                                                            (decode bit)\n"*/
       "                    a=r 7 a>>= 24 a== 0 if                  (if ((r[7] >> 24)==0) )\n"
       "                        a=r 7 a<<= 8 r=a 7                  (r[7] <<= 8)\n"
       "                        a=r 8 a<<= 8 c=r 36 a|=*c c++ \n"
@@ -7816,11 +7820,11 @@ std::string makeConfig(const char* method, int args[]) {
       "                        a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8\n"
       "                    endif\n"
       "                    a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
-      "                                                            (decode bit end)\n"
+      /*"                                                            (decode bit end)\n"*/
       "                    a=r 14 a== 0 ifl                        (if (r[14]==0) )\n"
       "                        a=r 33 a++ r=a 33 d=a a= 10 r=a 15  (p1++ r[15] = 10)\n"
       "                        a=r 34 a+= 128 r=a 34               (p3 += 128)\n"
-      "                                                            (decode bit)\n"
+      /*"                                                            (decode bit)\n"*/
       "                        a=r 7 a>>= 24 a== 0 if              (if ((r[7] >> 24)==0) )\n"
       "                            a=r 7 a<<= 8 r=a 7              (r[7] <<= 8)\n"
       "                            a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
@@ -7838,13 +7842,13 @@ std::string makeConfig(const char* method, int args[]) {
       "                            a=r 15 a+= 8 r=a 15\n"
       "                        endif\n"
       "                        a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
-      "                                                            (decode bit end)\n"
+      /*"                                                            (decode bit end)\n"*/
       "                    endif\n"
-      "                                                            (BIT TREE)\n"
+      /*"                                                            (BIT TREE)\n"*/
       "                    a= 1 r=a 12                             (r[12] = 1)\n"
       "                    do\n"
       "                        a=r 34 b=r 12 a+=b r=a 33 d=a       (p1 = p3 + r[12])\n"
-      "                                                            (decode bit)\n"
+      /*"                                                            (decode bit)\n"*/
       "                        a=r 7 a>>= 24 a== 0 if              (if ((r[7] >> 24)==0) )\n"
       "                            a=r 7 a<<= 8 r=a 7              (r[7] <<= 8)\n"
       "                            a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
@@ -7861,22 +7865,22 @@ std::string makeConfig(const char* method, int args[]) {
       "                            a=r 12 a++ r=a 12               (r[12]++)\n"
       "                        endif\n"
       "                        a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
-      "                                                            (decode bit end)\n"
+      /*"                                                            (decode bit end)\n"*/
       "                        a=r 12 b=r 17\n"
       "                    a<b while                               (while (r[12] < r[17]))\n"
       "                    a=r 12 b=r 17 a-=b r=a 12               (r[12] -= r[17])\n"
-      "                                                            (BIT TREE end)\n"
+      /*"                                                            (BIT TREE end)\n"*/
       "                    a=r 15 b=r 12 a+=b r=a 15               (r[15] += r[12])\n"
       "                    a=r 13 a< 4 ifl                         (if (r[13] < 4) )\n"
       "                        a=r 13 a+= 7 r=a 13 a= 64 r=a 17    (r[13] += 7 r[17] = 64)\n"
       "                                                            (p3 = 255+49 + (r[15] < 6 ? r[15] : 5) * r[17])\n"
       "                        a=r 15 a< 6 if a=a else a= 5 endif\n"
       "                        b=r 17 a*=b a+= 255 a+= 49 r=a 34\n"
-      "                                                            (BIT TREE)\n"
+      /*"                                                            (BIT TREE)\n"*/
       "                        a= 1 r=a 12                         (r[12] = 1)\n"
       "                        do\n"
       "                            a=r 34 b=r 12 a+=b r=a 33  d=a  (p1 = p3 + r[12])\n"
-      "                                                            (decode bit)\n"
+      /*"                                                            (decode bit)\n"*/
       "                            a=r 7 a>>= 24 a== 0 if          (if ((r[7] >> 24)==0))\n"
       "                                a=r 7 a<<= 8 r=a 7          (r[7] <<= 8)\n"
       "                                a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
@@ -7891,13 +7895,13 @@ std::string makeConfig(const char* method, int args[]) {
       "                                a=r 7 a-=c r=a 7 a=r 8 a-=c r=a 8   (r[7]-= r[10], r[8]-= r[10])\n"
       "                            endif\n"
       "                            a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1=r[9]-(r[11]>>5))\n"
-      "                                                                   (decode bit end)\n"
+      /*"                                                                   (decode bit end)\n"*/
       "                            a=r 12 a<<= 1 r=a 12                   (r[12] <<= 1)\n"
       "                            a=r 14 a== 0 if a=r 12 a++ r=a 12 endif (if (r[14]==0) r[12]++)\n"
       "                            a=r 12 b=r 17\n"
       "                        a<b while                                  (while (r[12] < r[17]))\n"
       "                        a=r 12 b=r 17 a-=b r=a 12                  (r[12] -= r[17])\n"
-      "                                                            (BIT TREE end)\n"
+      /*"                                                            (BIT TREE end)\n"*/
       "                        a=r 12 r=a 0                               (r[0] = r[12])\n"
       "                        a=r 0 a> 3 ifl                             (if (r[0] > 3) )\n"
       "                            a=r 12 a>>= 1 a-- r=a 17               (r[17] = (r[12] >> 1) - 1)\n"
@@ -7927,7 +7931,7 @@ std::string makeConfig(const char* method, int args[]) {
       "                            do\n"
       "                                a=r 34 b=r 12 a+=b r=a 33  d=a      (p1 = p3 + r[12])\n"
       "                                a=r 12 a<<= 1 r=a 12                (r[12] <<= 1)\n"
-      "                                                                    (decode bit)\n"
+      /*"                                                                    (decode bit)\n"*/
       "                                a=r 7 a>>= 24 a== 0 if              (if ((r[7] >> 24)==0) )\n"
       "                                    a=r 7 a<<= 8 r=a 7              (r[7] <<= 8)\n"
       "                                    a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
@@ -7943,7 +7947,7 @@ std::string makeConfig(const char* method, int args[]) {
       "                                    a=r 12 a++ r=a 12 a=r 0 b=r 17 a|=b r=a 0 (r[12]++, r[0] |= r[17])\n"
       "                                endif\n"
       "                                a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1 = r[9] - (r[11] >> 5))\n"
-      "                                                                    (decode bit end)\n"
+      /*"                                                                    (decode bit end)\n"*/
       "                                a=r 17 a<<= 1 r=a 17                (r[17] <<= 1)\n"
       "                                a=r 12 b=r 16\n"
       "                            a<b while                               (while (r[12] < r[16]))\n"
@@ -7951,7 +7955,7 @@ std::string makeConfig(const char* method, int args[]) {
       "                        a=r 0 a++ r=a 0                             (r[0]++)\n"
       "                    endif\n"
       "                endif\n"
-      "                a=r 0 a== 0 if                                      (if (r[0]==0) ) (stream EOF)\n"
+    /*  "                (a=r 0 a== 0 if                                      (if (r[0]==0) ) (stream EOF)\n"
       "                    a=r 20 a> 0 if                                  (if (r[20]) )\n"
       "                        b=0 d=r 20                                  (output dictionary to file)\n"
       "                        do     \n"
@@ -7961,34 +7965,57 @@ std::string makeConfig(const char* method, int args[]) {
       "                    endif\n"
       "                    a= 3 r=a 24                                     (end decode)\n"
       "                    halt\n"
-      "                endif\n"
+      "                endif)\n"*/
       "                do\n"
       "                    a=r 20 d=a b=r 0 a<b a=0 if a=r 23 endif        (r[12] = dict[(r[20] < r[0] ? r[23] : 0) + r[20] - r[0]])\n"
       "                    a+=d b=r 0 a-=b b=a a=*b r=a 12\n"
       "                    b=d *b=a b++ a=b r=a 20                         (dict[r[20]++] = r[12])\n"
       "                    a=r 21 a++ r=a 21                               (r[21]++)\n"
-      "                    a=r 20 b=r 23 a==b if                           (if (r[20] == r[23]) )\n"
+    /*  "                   ( a=r 20 b=r 23 a==b if                           (if (r[20] == r[23]) )\n"
       "                        b=0 d=r 20                                  (output dictionary to file)\n"
       "                        do     \n"
       "                            a=*b out b++\n"
       "                            a=b\n"
       "                        a<d while\n"
       "                        a=0 r=a 20 \n"
-      "                    endif \n"
+      "                    endif) \n" */
       "                    a=r 15 a-- r=a 15\n"
       "                a> 0 while                                          (while (--r[15]))\n"
       "            endif                \n"
       "            a=r 21 b=r 22\n"
       "        a<b while                                                   (out < max_size (r[21] < r[22]))\n"
-      "                                                                    (main loop end)\n"
-      "        a=r 20 a> 0 if                                              (if (r[20] == r[23]) )\n"
+      "                                                                    (main loop end)\n";
+    if (args[2]&1) {
+     pcomp+=
+      "        b=0 d=r 20 do (for b=0..d-1, d = end of buf) (e8e9 filter) \n"
+      "          a=b a==d ifnot\n"
+      "            a+= 4 a<d if\n"
+      "              a=*b a&= 254 a== 232 if (e8 or e9?)\n"
+      "                c=b b++ b++ b++ b++ a=*b a++ a&= 254 a== 0 if (00 or ff)\n"
+      "                  b-- a=*b\n"
+      "                  b-- a<<= 8 a+=*b\n"
+      "                  b-- a<<= 8 a+=*b\n"
+      "                  a-=b a++\n"
+      "                  *b=a a>>= 8 b++\n"
+      "                  *b=a a>>= 8 b++\n"
+      "                  *b=a b++\n"
+      "                endif\n"
+      "                b=c\n"
+      "              endif\n"
+      "            endif\n"
+      "            a=*b out b++\n"
+      "          forever\n"
+      "        endif\n";
+    } else {
+    pcomp+=
       "            b=0 d=r 20                                              (output dictionary to file)\n"
       "            do     \n"
       "                a=*b out b++\n"
       "                a=b\n"
-      "            a<d while\n"
+      "            a<d while\n";
+    }
+    pcomp+=
       "            a= 3 r=a 24                                             (end decode)\n"
-      "        endif\n"
       "    halt\n"
       "end";
   } else if (wbpe) {
@@ -9195,7 +9222,7 @@ std::string makeConfig(const char* method, int args[]) {
     }
     
   }
-  if (level==5) hcomp="hcomp \n"; // lzma
+  if (level==5) hcomp="hcomp \n"; // LZMA
 
   return hdr+itos(ncomp)+"\n"+comp+hcomp+"halt\n"+pcomp;
   
@@ -9303,8 +9330,8 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       else if (type<21)  // store if not compressible 20?
         method+=",0";
       else if (type<60)  // faster LZMA if barely compressible
-         method+=",14,5,5,0,0,128";
-      else if (type>=640 || (type&1)) {  // BWT if text or highly compressible
+        method+=",14,6,5,0,0,128";
+      else if (type>=800/* && (type&1)*/) {  // BWT if text or highly compressible
         int lowP=0;
         if ((type&1)==0) {
           // Analyze the data
@@ -9344,13 +9371,14 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       }
       else  // LZ77 with O0-1 compression of up to 12 literals
         //method+=","+itos(2+doe8)+",12,0,7"+sasz+",1c0,0,511i2s8,32,65";
-        //else if (type<100*4)  // lzma
-        if (doe8)
-            method+=",14,7,5,0,2,128";
+        //else if (type<100*4) 
+        // LZMA
+        if (doe8)                       
+            method+=",14,7,8,0,1,144,1"; // if input has been filtered then this will be worse
         else  if (type>=440)
             method+=",14,7,8,0,1,128";
         else
-            method+=",14,7,3,0,2,64";
+            method+=",14,7,4,0,2,128";
     }
 
     // LZ77+CM, fast CM, or BWT depending on type

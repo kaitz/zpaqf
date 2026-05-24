@@ -2910,7 +2910,7 @@ int Jidac::add() {
       }
       ++removed;
       if (is.size()>16000) {
-        libzpaq::compressBlock(&is, &wp, "3",
+        libzpaq::compressBlock(&is, &wp, "1",
             ("jDC"+itos(date)+"i"+itos(++dtcount, 10)).c_str(), "jDC\x01");
         is.resize(0);
       }
@@ -2958,7 +2958,7 @@ int Jidac::add() {
       }
     }
     if (is.size()>16000 || (is.size()>0 && p==edt.end())) {
-      libzpaq::compressBlock(&is, &wp, "3",
+      libzpaq::compressBlock(&is, &wp, "1",
           ("jDC"+itos(date)+"i"+itos(++dtcount, 10)).c_str(), "jDC\x01");
       is.resize(0);
     }
