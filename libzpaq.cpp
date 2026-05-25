@@ -14,6 +14,8 @@
                         (C) 2011, Dell Inc. Written by Matt Mahoney. GPL-3
                         https://www.gnu.org/licenses/gpl-3.0.html
 
+  LZMA SDK 26.01 (2026-04-27)   -   public domain
+
   All of the remaining software is provided as-is, with no warranty.
   I, Matt Mahoney, release this software into
   the public domain. This applies worldwide.
@@ -7331,6 +7333,11 @@ Returns:
   SZ_ERROR_OUTPUT_EOF - output buffer overflow
   SZ_ERROR_THREAD     - errors in multithreading functions (only for Mt version)
 */
+/*
+  Changes to LzmaLib:
+     - no MT match finder
+  LZMA Reader only uses LzmaCompress from LzmaLib
+*/
 class LZMA: public libzpaq::Reader {
   const unsigned char* in;    // input pointer
   const unsigned n;           // input length
@@ -9307,59 +9314,72 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
       else if (special==IM_JPG)
         method+=",c0.0.15.255i2n1,1,0,1,0";
         else if (special==IM_AVI)
-          method+=",c0.0.15.255i2n1,1,0,1,0";//n0,1,0,1,0
-      else if (type<21)  // store if not compressible 20?
+          method+=",c0.0.15.255i2n1,1,0,1,0";
+      else if (type<21)  // store if not compressible 20
         method+=",0";
-      else if (type<60)  // faster LZMA if barely compressible
-        method+=",14,6,5,0,0,128";
-      else if (type>=800/* && (type&1)*/) {  // BWT if text or highly compressible
+      else {
         int lowP=0;
-        if ((type&1)==0) {
-          // Analyze the data
-          const int NR=1<<12;
-          int pt[256]={0};  // position of last occurrence
-          int r[NR]={0};    // count repetition gaps of length r
-          const unsigned char* p=in->data();
-          if (level>0) {
-            for (unsigned i=0; i<n; ++i) {
-              const int k=i-pt[p[i]];
-              if (k>0 && k<NR) ++r[k];
-              pt[p[i]]=i;
+        if (doe8==0) {
+            const float minscore=(type<500 && (type&1)==0)?0.01:0.1;
+            // Analyze the data
+            const int NR=1<<12;
+            int pt[256]={0};  // position of last occurrence
+            int r[NR]={0};    // count repetition gaps of length r
+            const unsigned char* p=in->data();
+            if (level>0) {
+              for (unsigned i=0; i<n; ++i) {
+                const int k=i-pt[p[i]];
+                if (k>0 && k<NR) ++r[k];
+                pt[p[i]]=i;
+              }
             }
-          }
-          // Add low period if any
-          int n1=n-r[1]-r[2]-r[3];
-          for (int i=0; i<2; ++i) {
-            int period=0;
-            double score=0;
-            int t=0;
-            for (int j=5; j<NR && t<n1; ++j) {
-              const double s=r[j]/(256.0+n1-t);
-              if (s>score) score=s, period=j;
-              t+=r[j];
+            // Add low period if any
+            int n1=n-r[1]-r[2]-r[3];
+            for (int i=0; i<2; ++i) {
+              int period=0;
+              double score=0;
+              int t=0;
+              for (int j=5; j<NR && t<n1; ++j) {
+                const double s=r[j]/(256.0+n1-t);
+                if (s>score) score=s, period=j;
+                t+=r[j];
+              }
+              if (period>2 && score>minscore) {
+                lowP=period;
+                n1-=r[period];
+                r[period]=0;
+              }
+              else
+                break;
             }
-            if (period>4 && score>0.1) {
-              if (period<=10)
-                lowP=period-1;
-              n1-=r[period];
-              r[period]=0;
-            }
-            else
-              break;
-          }
         }
-        method+=","+itos(3+doe8)+"ci"+itos(1+(lowP/2))+"s8,32,85";
-      }
-      else  // LZ77 with O0-1 compression of up to 12 literals
-        //method+=","+itos(2+doe8)+",12,0,7"+sasz+",1c0,0,511i2s8,32,65";
-        //else if (type<100*4) 
+        if (type>=800 || type>=400 && (type&1))    // BWT if text or highly compressible
+            method+=","+itos(3+doe8)+"ci"+itos(1+((lowP<11?lowP-1:0)/2))+"s8,32,85";
         // LZMA
-        if (doe8)                       
-            method+=",14,7,8,0,1,144,1"; // if input has been filtered then this will be worse
+        else if (doe8)                             // if input has been filtered then this will be worse              
+            method+=",14,7,8,0,1,144,1";
+        else if (lowP && type<500) {               // period data
+           // different unique values
+           // lowP lc, lp, pb
+           //   3:  4,  0,  2
+           //   4:  8,  1,  1
+           //  10:  4,  2,  2
+           //  14:  4,  2,  1
+           //  34:  4,  3,  2
+           // 130:  4,  4,  3
+           // 256:  4,  2,  3
+            const int lp=lg(lowP-1)/2;             // lp=1 (16 bit), lp=2 (32 bit), ...
+            if (lowP&1)                            // odd, drop lp
+                method+=",14,7,4,0,2,128";
+            else
+                method+=",14,7,"+itos(8/(lp>2?2:lp))+","+itos(lp/(lowP>=256?2:1))+","+itos(lp-(lowP>12?1:0))+",128";
+        } else if (type<60)                       // faster if barely compressible
+            method+=",14,6,5,0,0,128";
         else  if (type>=440)
             method+=",14,7,8,0,1,128";
         else
             method+=",14,7,4,0,2,128";
+      }
     }
 
     // LZ77+CM, fast CM, or BWT depending on type
