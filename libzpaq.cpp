@@ -7339,14 +7339,15 @@ Returns:
   LZMA Reader only uses LzmaCompress from LzmaLib
 */
 class LZMA: public libzpaq::Reader {
-  const unsigned char* in;    // input pointer
-  const unsigned n;           // input length
+  unsigned char* in;    // input pointer
+  unsigned n;           // input length
   std::vector<unsigned char> outb;
   unsigned i;                 // current location in in (0 <= i < n)
   unsigned rpos, wpos;        // read, write pointers
   int level;
   unsigned dictSize;
   int lc,lp,pb,fb;
+  bool wpfail;
   
   void CompressLZMA();  // encode to buf
 
@@ -7382,8 +7383,8 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
     in(inbuf.data()),
     n(inbuf.size()),
     i(0),
-    rpos(0), wpos(0),level(args[2]/2),dictSize((1<<lg((1<<args[0])*1024*1024))/2),
-    lc(args[3]),lp(args[4]),pb(args[5]),fb(args[6]) {
+    rpos(0), wpos(0),level(args[2]/4),dictSize((1<<lg((1<<args[0])*1024*1024))/2),
+    lc(args[3]),lp(args[4]),pb(args[5]),fb(args[6]),wpfail(false) {
   assert(args[0]>=0);
   assert(level>=0  && level<=9);
   assert(lc>=0  && lc<=8);
@@ -7393,9 +7394,31 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
   assert(n<=(1u<<20<<args[0]));
   if (dictSize<0x10000) dictSize=0x10000; // 64kb
   /*int lplc=(1<<(lc+lp));
-  printf("Level: %d Dict: %d Parms: lc %d lp %d pb %d  fb %d state %dkb. Exe %d\n",level,dictSize,lc,lp,pb,fb,(4+lplc+lplc/2),args[2]&1);*/
+  printf("Level: %d Dict: %d Parms: lc %d lp %d pb %d  fb %d state %dkb. Exe %d, WBPE %d\n",level,dictSize,lc,lp,pb,fb,(4+lplc+lplc/2),args[2]&1,args[2]&2);*/
   // e8e9 transform
   if (args[2]&1) e8e9(inbuf.data(), n);
+  else if (args[2]&2) {
+      int wpargs[9]={0};
+      wpargs[0]=args[0]; // mem
+      wpargs[2]=args[8]; // cap=1
+      StringBuffer wpbuf;
+      wpbuf.setLimit((1<<lg((1<<args[0])*1024*1024))/2);
+      WBPE wbpe(inbuf, wpargs);
+      int wc=0;
+      // Test WBPE
+      while ((wc=wbpe.get())>=0) {
+          wpbuf.put(wc);
+          if (wpbuf.size()==dictSize) {
+              wpfail=true;
+              break;
+          }
+      }
+      if (wpfail==false) {
+          inbuf.swap(wpbuf);
+          n=inbuf.size();
+          in=inbuf.data();
+      }
+  }
   CompressLZMA();
 }
 
@@ -7416,10 +7439,10 @@ void LZMA::CompressLZMA() {
   else if (res==SZ_ERROR_OUTPUT_EOF) error("LZMA - output buffer overflow");
   else if (res==SZ_ERROR_THREAD) error("LZMA - multithreading error");
   else if (res!=SZ_OK) error("LZMA - error");
-  
   int64_t flen=n;
   for (int i=0; i<8; i++)
       outb[i+LZMA_PROPS_SIZE]=(unsigned char)(flen>>(8*i)); //add file size so the decoder knows explicitly when the data ends
+  if (wpfail) outb[8+LZMA_PROPS_SIZE]=1; // set WBPE to failed state for ZPAQL model
   outb.resize(propsSize+8+destLen);
   wpos=outb.size();
 }
@@ -7473,7 +7496,7 @@ std::string makeConfig(const char* method, int args[]) {
       if (args[4]>4 || args[4]<0) args[4]=0;    // lp 0-4
       if (args[5]>4 || args[5]<0) args[5]=2;    // pb 0-4
       if (args[6]>273 || args[6]<0) args[6]=32; // fb 5-273
-      args[2]=args[2]*2+args[7]; // level*2+doe8
+      args[2]=args[2]*4+args[7]; // level*2+doe8|wbpe
       int lclp=(1<<(args[3]+args[4]));
       lclp=(4+lclp+lclp/2);
       int state=lg(lclp*1024);
@@ -7506,7 +7529,7 @@ std::string makeConfig(const char* method, int args[]) {
       "    k         r[18]\n"
       "    offset    r[19]\n"
       "    pos       r[20]\n"
-      "    out       r[21] unused\n"
+      "    out       r[21] unused or wbpe\n"
       "    max size  r[22]\n"
       "    dict size r[23]\n"
       "    hdr state r[24]\n"
@@ -7522,6 +7545,8 @@ std::string makeConfig(const char* method, int args[]) {
       "    p3        r[34]  prob *\n"
       "    dict      r[35]  size / compressed data start - unused\n"
       "    cdata     r[36]  compressed data pos\n"
+      "              r[37]  WBPE\n"
+      "              r[38]  WBPE\n"
       ")\n"*/
       "    *c=a c++ \n"
       "    d=a\n"
@@ -7567,8 +7592,8 @@ std::string makeConfig(const char* method, int args[]) {
       "                    r=a 22                          (-1 if stream has EOF)\n"
       "                    a=c a+= 8 c=a\n"
       /*"\n"*/
-      "                    a=0 c++ a=*c                    (flag)\n"
-      "                    a> 0 if                 \n"
+      "                    a=0 c++ a=*c r=a 38             (flag 0 - LZMA | WBPE+LZMA, 1 - LZMA if WBPE failed )\n"
+      "                    a> 1 if                 \n"
       "                        a= 3 r=a 24                 (fail)\n"
       "                        halt\n"
       "                    endif\n"
@@ -7994,6 +8019,77 @@ std::string makeConfig(const char* method, int args[]) {
       "            a=*b out b++\n"
       "          forever\n"
       "        endif\n";
+    } else if (args[2]&2) {  
+    pcomp+=
+     "         a=r 38 a== 1 ifl b=0 d=r 20                      (WBPE failed, just output to file)\n"
+      "        do     \n"
+      "            a=*b out b++\n"
+      "            a=b\n"
+      "        a<d while\n"
+      "        elsel a=0 r=a 1 r=a 2 r=a 3 r=a 4 r=a 5 r=a 6 r=a 21 a=r 23 r=a 37\n"
+      "        do b=r 21 d=*b b++ a=b r=a 21                    (d=read byte, pos++)\n"
+      "        a=r 3\n"
+      "        (read header)\n"
+      "        a< 4 if\n"
+      "            a== 0 if\n"
+      "                a=d r=a 4 a= 1 r=a 3                     (esc)\n"
+      "            else \n"
+      "                a== 1 if\n"
+      "                    a=d r=a 5 a= 2 r=a 3                 (cap) \n"
+      "                else \n"
+      "                    a== 2 if\n"
+      "                        a=d r=a 6 a= 3 r=a 3             (upper)\n"
+      "                    else\n"
+      "                        a=r 37 c=a b=r 2 a+=b b=a *b=d   (dict[r1*256+r2]=d)\n"
+      "                        d=*c                             (string lenght)\n"
+      "                        a=r 2 a==d if                    (r2==dict[r1*256])\n"
+      "                            a=r 1 a++ r=a 1 a<<= 8       (r1++)\n"
+      "                            b=r 23 a+=b r=a 37           (c=dict[r1*256])\n"
+      "                            a=0 r=a 2                    (r2=0) \n"
+      "                        else \n"
+      "                            a++ r=a 2\n"
+      "                        endif\n"
+      "                        a=r 1 a> 255 if \n"
+      "                            a= 4 r=a 3 a= 1 r=a 1         (header done)\n"
+      "                        endif \n"
+      "                    endif \n"
+      "                endif \n"
+      "            endif \n"
+      "        else \n"
+      /*"        (decode file)\n"*/
+      "        a=r 1 a== 2 a=d if           (ESC)\n"
+      "            out a= 1 r=a 1           (out char, set TEXT=1)\n"
+      "        else \n"
+      "        b=r 4 a==b if                (mode ESC=2)\n"
+      "           a= 2 r=a 1\n"
+      "        else\n"
+      "            b=r 5 a==b if            (mode CAP=3) \n"
+      "              a= 3 r=a 1\n"
+      "            else\n"
+      "                b=r 6 a==b if        (mode UPPER=4)\n"
+      "                    a= 4 r=a 1\n"
+      "                else\n"
+      "                    a<<= 8 b=r 23 a+=b r=a 9  (r3=char*256) \n"
+      "                    a++ r=a 7        (r7=r9+1 (string start))\n"
+      "                    c=r 9 a=*c       (string lenght) \n"
+      "                    b=r 7 a+=b r=a 8 (r8 (string end))\n"
+      "                    do                  (out string )\n"
+      "                        a=r 1 a== 1 if  (TEXT?)  \n"
+      "                           a=*b \n"
+      "                        else \n"
+      "                           a=*b a^= 32  \n"
+      "                        endif\n"
+      "                        b++ out\n"
+      "                        a=r 1 a== 3 if  (CAP? to TEXT)\n"
+      "                           a= 1 r=a 1\n"
+      "                        endif\n"
+      "                        a=b c=r 8\n"
+      "                    a<c while\n"
+      "                    a= 1 r=a 1\n"
+      "                endif\n"
+      "            endif\n"
+      "        endif endif endif\n"
+      "    a=r 21 d=r 20  a<d while endif\n";
     } else {
     pcomp+=
       "        b=0 d=r 20                                              (output dictionary to file)\n"
@@ -8014,7 +8110,7 @@ std::string makeConfig(const char* method, int args[]) {
       "    a> 255 ifnotl\n"
       "        d=a \n"
       "        a=r 3\n"
-      "        (read header)\n"
+      /*"        (read header)\n"*/
       "        a< 4 if\n"
       "            a== 0 if\n"
       "                a=d r=a 4 a= 1 r=a 3           (esc)\n"
@@ -8041,12 +8137,11 @@ std::string makeConfig(const char* method, int args[]) {
       "            endif \n"
       "            halt\n"
       "        endif\n"
-      "        (decode file)\n"
-      "        a=r 1 a== 2 if               (ESC)\n"
-      "            a=d out  a= 1 r=a 1      (out char, set TEXT=1)\n"
+      /*"        (decode file)\n"*/
+      "        a=r 1 a== 2 a=d if               (ESC)\n"
+      "            out  a= 1 r=a 1      (out char, set TEXT=1)\n"
       "            halt\n"
       "        endif\n"
-      "        a=d\n"
       "        b=r 4 a==b if                (mode ESC=2)\n"
       "           a= 2 r=a 1\n"
       "        else\n"
@@ -8056,11 +8151,10 @@ std::string makeConfig(const char* method, int args[]) {
       "                b=r 6 a==b if        (mode UPPER=4)\n"
       "                    a= 4 r=a 1\n"
       "                else\n"
-      "                    a=d a<<= 8 r=a 9 (r3=char*256) \n"
+      "                    (a=d) a<<= 8 r=a 9 (r3=char*256) \n"
       "                    a++ r=a 7        (r7=r9+1 (string start))\n"
       "                    c=r 9 a=*c       (string lenght)\n"
       "                    b=r 7 a+=b r=a 8 (r8 (string end))\n"
-      "                    b=r 7\n"
       "                    do                  (out string )\n"
       "                        a=r 1 a== 1 if  (TEXT?)  \n"
       "                           a=*b \n"
@@ -9353,12 +9447,12 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
                 break;
             }
         }
-        if (type>=800 || type>=400 && (type&1))    // BWT if text or highly compressible
+        if (type>=760)    // BWT if highly compressible
             method+=","+itos(3+doe8)+"ci"+itos(1+((lowP<11?lowP-1:0)/2))+"s8,32,85";
         // LZMA
         else if (doe8)                             // if input has been filtered then this will be worse              
             method+=",14,7,8,0,1,144,1";
-        else if (lowP && type<500) {               // period data
+        else if (lowP && type<500 && (info&255)<=240) {               // period data
            // different unique values
            // lowP lc, lp, pb
            //   3:  4,  0,  2
@@ -9375,8 +9469,12 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
                 method+=",14,7,"+itos(8/(lp>2?2:lp))+","+itos(lp/(lowP>=256?2:1))+","+itos(lp-(lowP>12?1:0))+",128";
         } else if (type<60)                       // faster if barely compressible
             method+=",14,6,5,0,0,128";
+        else  if (type>=400 && (type&1))
+            method+=",14,7,8,0,"+itos(lowP?1:0)+",144,2,1"; // WBPE(CAP)+LZMA for text
+        else  if (type>=400 && (info&255)==255 && special==0)
+            method+=",14,7,8,0,"+itos(lowP?1:0)+",144,2,1"; // WBPE(CAP)+LZMA for text
         else  if (type>=440)
-            method+=",14,7,8,0,1,128";
+            method+=",14,7,8,0,0,128";
         else
             method+=",14,7,4,0,2,128";
       }
