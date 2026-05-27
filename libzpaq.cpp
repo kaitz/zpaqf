@@ -7411,7 +7411,7 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
       // Test WBPE
       while ((wc=wbpe.get())>=0) {
           wpbuf.put(wc);
-          if (wpbuf.size()==dictSize) {
+          if (wpbuf.size()>=n) { // fail if larger then input
               wpfail=true;
               break;
           }
