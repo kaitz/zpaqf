@@ -34,6 +34,8 @@ See libzpaq.h for additional documentation.
 #include <vector>
 #include <stdio.h>
 
+#define GPL  // comment to disable GPL source (WBPE)
+
 #ifdef unix
 #ifndef NOJIT
 #include <sys/mman.h>
@@ -6889,7 +6891,7 @@ void LZBuffer::write_match(unsigned len, unsigned off) {
     }
   }
 }
-
+#ifdef GPL
 // WBPE is based on wbpe.cpp v1.1 - Preprocessor for text compression
 // word byte pair encoding
 class WBPE: public libzpaq::Reader {
@@ -7243,7 +7245,7 @@ void WBPE::fill() {
     if (slen>0) memmove(ins, ins+bestmatch, slen);
   }
 }
-
+#endif
 
 /*
 
@@ -7397,6 +7399,7 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
   printf("Level: %d Dict: %d Parms: lc %d lp %d pb %d  fb %d state %dkb. Exe %d, WBPE %d\n",level,dictSize,lc,lp,pb,fb,(4+lplc+lplc/2),args[2]&1,args[2]&2);*/
   // e8e9 transform
   if (args[2]&1) e8e9(inbuf.data(), n);
+#ifdef GPL
   else if (args[2]&2) {
       int wpargs[9]={0};
       wpargs[0]=args[0]; // mem
@@ -7419,6 +7422,7 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
           in=inbuf.data();
       }
   }
+#endif
   CompressLZMA();
 }
 
@@ -7486,7 +7490,9 @@ std::string makeConfig(const char* method, int args[]) {
   const bool dotext = args[1] == 10;
   const bool dobmp8 = args[1] == 11;
   const bool dopgm = args[1] == 12;
+#ifdef GPL  
   const bool wbpe = args[1] == 13;
+#endif  
   const bool lzma = args[1] == 14;
 
   if (lzma) {
@@ -8102,6 +8108,7 @@ std::string makeConfig(const char* method, int args[]) {
       "        a= 3 r=a 24                                             (end decode)\n"
       "    halt\n"
       "end";
+#ifdef GPL
   } else if (wbpe) {
   level=4;
     hdr="comp 9 16 0 16 ";
@@ -8174,8 +8181,8 @@ std::string makeConfig(const char* method, int args[]) {
       "    endif   \n"
       "    halt\n"
       "end";
-  }
-  else if (dobmp8 || dopgm ){
+#endif  
+  } else if (dobmp8 || dopgm ){
      hdr="comp 17 17 0 3 19 (hh hm ph pm n)\n"
           "0 const 160\n"
           "1 cm 20 255\n"
@@ -9156,7 +9163,7 @@ std::string makeConfig(const char* method, int args[]) {
       else // s
         comp+=" sse "+itos(v[1])+" "+itos(ncomp-1)+" "+itos(v[2])+" "
             +itos(v[3])+"\n";
-      if (v[1]>8 && ( v[3] == 0 && (v[0] == 'm' || v[0] == 't') || v[0] == 's')) {
+      if (v[1]>8 && ( (v[3] == 0 && (v[0] == 'm' || v[0] == 't')) || v[0] == 's')) {
          if (v[0] == 'm') hcomp += "  (mixer context)\n";
          if (v[0] == 't') hcomp += "  (mixer2 context)\n";
          if (v[0] == 's') hcomp += "  (SSE context)\n"; 
@@ -9469,14 +9476,17 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
                 method+=",14,7,"+itos(8/(lp>2?2:lp))+","+itos(lp/(lowP>=256?2:1))+","+itos(lp-(lowP>12?1:0))+",128";
         } else if (type<60)                       // faster if barely compressible
             method+=",14,6,5,0,0,128";
+#ifdef GPL
         else  if (type>=400 && (type&1))
             method+=",14,7,8,0,"+itos(lowP?1:0)+",144,2,1"; // WBPE(CAP)+LZMA for text
         else  if (type>=400 && (info&255)==255 && special==0)
             method+=",14,7,8,0,"+itos(lowP?1:0)+",144,2,1"; // WBPE(CAP)+LZMA for text
+#endif
         else  if (type>=440)
             method+=",14,7,8,0,0,128";
         else
             method+=",14,7,4,0,2,128";
+            printf("%s\n",method.c_str());
       }
     }
 
@@ -9520,7 +9530,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
                     if (m2[j]>0)avg=avg+m2[j],count++;
                 }
                 int lgo2=lg(avg/count);
-                if (lgo1>8 && lgo2>=8  ||lgo1>=8 && lgo1>lgo2*2 && lgo2>6 )
+                if ((lgo1>8 && lgo2>=8) || (lgo1>=8 && lgo1>lgo2*2 && lgo2>6) )
                     doIndirect=true;
                    // printf("Indirect %d %d\n",lgo1,lgo2);
                 
@@ -9562,11 +9572,13 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
         method+=","+itos(1+doe8)+",4,0,3"+htsz;
       else if (type<48)
         method+=","+itos(2+doe8)+",5,0,7"+sasz+"1c0,0,511";
+#ifdef GPL
       else if (type>480 && type<900 && ((type&1) || (info&255)>240) && special==0 && doIndirect) {
         method+=","+itos(13); // WBPE
         method+="ci2,3,2n1,24,8,3,1a24,1,1ts16,20,255";
-        printf("WBPE\n");
-      } else if (type<900) {
+      }
+#endif
+       else if (type<900) {
         method+=","+itos(doe8);
         if (type&1) { //text
             if (type>100) {
@@ -9751,11 +9763,13 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
     co.setInput(&lz);
     co.compress();
   }
+#ifdef GPL  
   else if (args[1]==13) {  // WBPE
     WBPE wbpe(*in, args);
     co.setInput(&wbpe);
     co.compress();
   }
+#endif
   else if (args[1]==14) {  // LZMA
     LZMA lzma(*in, args);
     co.setInput(&lzma);
