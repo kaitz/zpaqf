@@ -7400,6 +7400,7 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
   // e8e9 transform
   if (args[2]&1) e8e9(inbuf.data(), n);
 #ifdef GPL
+  // WBPE transform
   else if (args[2]&2) {
       int wpargs[9]={0};
       wpargs[0]=args[0]; // mem
@@ -7408,13 +7409,15 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
       wpbuf.setLimit((1<<lg((1<<args[0])*1024*1024))/2);
       WBPE wbpe(inbuf, wpargs);
       int wc=0;
-      // Test WBPE
-      while ((wc=wbpe.get())>=0) {
-          wpbuf.put(wc);
-          if (wpbuf.size()>=n) { // fail if larger then input
+      const int bs=0x100000;
+      StringBuffer rb(bs);
+      rb.write(0, bs);
+      while ((wc=wbpe.read((char*)rb.data(), bs))>0) {
+          if ((wpbuf.size()+wc)>=n) { // fail if larger then input
               wpfail=true;
               break;
           }
+          wpbuf.write((char*)rb.data(), wc);
       }
       if (wpfail==false) {
           inbuf.swap(wpbuf);
@@ -7429,8 +7432,8 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
 // Encode from in to buf until end of input or buf is not empty
 void LZMA::CompressLZMA() {
   size_t propsSize=LZMA_PROPS_SIZE;
-  size_t destLen=n+n/3+128;
-  outb.resize(propsSize+8+destLen); 
+  size_t destLen=dictSize; // should be n
+  outb.resize(propsSize+8+destLen);
   int res = LzmaCompress(
     &outb[LZMA_PROPS_SIZE+8], &destLen,
     &in[0], n,
@@ -7445,10 +7448,15 @@ void LZMA::CompressLZMA() {
   else if (res!=SZ_OK) error("LZMA - error");
   int64_t flen=n;
   for (int i=0; i<8; i++)
-      outb[i+LZMA_PROPS_SIZE]=(unsigned char)(flen>>(8*i)); //add file size so the decoder knows explicitly when the data ends
-  if (wpfail) outb[8+LZMA_PROPS_SIZE]=1; // set WBPE to failed state for ZPAQL model
+      outb[i+LZMA_PROPS_SIZE]=(unsigned char)(flen>>(8*i)); // add file size so the decoder knows explicitly when the data ends
+  if (wpfail) outb[8+LZMA_PROPS_SIZE]=1;                    // set WBPE to failed state for ZPAQL model
   outb.resize(propsSize+8+destLen);
   wpos=outb.size();
+  // This should not happen. 
+  // Fail if already compressed data is selected for compression in the model selection.
+  // Model has memory up to dictSize size and decompression will fail.
+  // Essentially the same as SZ_ERROR_OUTPUT_EOF
+  if (wpos>=dictSize) error("LZMA - compressed data is larger");
 }
 
 // Generate a config file from the method argument with syntax:
@@ -9769,7 +9777,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
   else if (args[1]==13) {  // WBPE
     WBPE wbpe(*in, args);
     co.setInput(&wbpe);
-    co.compress();
+    co.compress();         // This seems safe, even for incompressible data as WBPE can expand input data
   }
 #endif
   else if (args[1]==14) {  // LZMA
