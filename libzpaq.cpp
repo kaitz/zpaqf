@@ -7502,6 +7502,11 @@ std::string makeConfig(const char* method, int args[]) {
       if (args[4]>4 || args[4]<0) args[4]=0;    // lp 0-4
       if (args[5]>4 || args[5]<0) args[5]=2;    // pb 0-4
       if (args[6]>273 || args[6]<0) args[6]=32; // fb 5-273
+#ifdef GPL 
+      if (args[7]>2 )               args[7]=0;  // doe8|wbpe
+#else      
+      if (args[7]>1 )               args[7]=0;  // doe8
+#endif
       args[2]=args[2]*4+args[7]; // level*2+doe8|wbpe
       int lclp=(1<<(args[3]+args[4]));
       lclp=(4+lclp+lclp/2);
@@ -7537,7 +7542,7 @@ std::string makeConfig(const char* method, int args[]) {
       "    pos       r[20]\n"
       "    out       r[21] unused or wbpe\n"
       "    max size  r[22]\n"
-      "    dict size r[23]\n"
+      "    dict size r[23] or wbpe dict start pos\n"
       "    hdr state r[24]\n"
       "    mask16    r[25]  0xffff for probability\n"
       "    val1      r[26]  1846\n"
@@ -8025,6 +8030,7 @@ std::string makeConfig(const char* method, int args[]) {
       "            a=*b out b++\n"
       "          forever\n"
       "        endif\n";
+#ifdef GPL
     } else if (args[2]&2) {  
     pcomp+=
      "         a=r 38 a== 1 ifl b=0 d=r 20                      (WBPE failed, just output to file)\n"
@@ -8075,27 +8081,26 @@ std::string makeConfig(const char* method, int args[]) {
       "                b=r 6 a==b if        (mode UPPER=4)\n"
       "                    a= 4 r=a 1\n"
       "                else\n"
-      "                    a<<= 8 b=r 23 a+=b r=a 9  (r3=char*256) \n"
-      "                    a++ r=a 7        (r7=r9+1 (string start))\n"
-      "                    c=r 9 a=*c       (string lenght) \n"
-      "                    b=r 7 a+=b r=a 8 (r8 (string end))\n"
-      "                    do                  (out string )\n"
-      "                        a=r 1 a== 1 if  (TEXT?)  \n"
-      "                           a=*b \n"
-      "                        else \n"
-      "                           a=*b a^= 32  \n"
+      "                    a<<= 8 b=r 23 a+=b c=a  (r3=char*256)\n"
+      "                    a++ b=a          (r7=r9+1 (string start))\n"
+      "                    a=*c             (string lenght) \n"
+      "                    a+=b             (r8 (string end))\n"
+      "                    c=a do           (out string)\n"
+      "                        a=r 1 a== 1 a=*b ifnot  (TEXT?)  \n"
+      "                            a^= 32  \n"
       "                        endif\n"
       "                        b++ out\n"
       "                        a=r 1 a== 3 if  (CAP? to TEXT)\n"
       "                           a= 1 r=a 1\n"
       "                        endif\n"
-      "                        a=b c=r 8\n"
+      "                        a=b\n"
       "                    a<c while\n"
       "                    a= 1 r=a 1\n"
       "                endif\n"
       "            endif\n"
       "        endif endif endif\n"
       "    a=r 21 d=r 20  a<d while endif\n";
+#endif
     } else {
     pcomp+=
       "        b=0 d=r 20                                              (output dictionary to file)\n"
@@ -8158,21 +8163,19 @@ std::string makeConfig(const char* method, int args[]) {
       "                b=r 6 a==b if        (mode UPPER=4)\n"
       "                    a= 4 r=a 1\n"
       "                else\n"
-      "                    (a=d) a<<= 8 r=a 9 (r3=char*256) \n"
-      "                    a++ r=a 7        (r7=r9+1 (string start))\n"
-      "                    c=r 9 a=*c       (string lenght)\n"
-      "                    b=r 7 a+=b r=a 8 (r8 (string end))\n"
-      "                    do                  (out string )\n"
-      "                        a=r 1 a== 1 if  (TEXT?)  \n"
-      "                           a=*b \n"
-      "                        else \n"
-      "                           a=*b a^= 32  \n"
+      "                    a<<= 8 c=a       (r3=char*256)\n"
+      "                    a++ b=a          (r7=r9+1 (string start))\n"
+      "                    a=*c             (string lenght) \n"
+      "                    a+=b             (r8 (string end))\n"
+      "                    c=a do           (out string)\n"
+      "                        a=r 1 a== 1 a=*b ifnot  (TEXT?)  \n"
+      "                            a^= 32  \n"
       "                        endif\n"
       "                        b++ out\n"
       "                        a=r 1 a== 3 if  (CAP? to TEXT)\n"
       "                           a= 1 r=a 1\n"
       "                        endif\n"
-      "                        a=b c=r 8\n"
+      "                        a=b\n"
       "                    a<c while\n"
       "                    a= 1 r=a 1\n"
       "                endif\n"
@@ -9454,7 +9457,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
                 break;
             }
         }
-        if (type>=760)    // BWT if highly compressible
+        if (type>=800 && (type&1)==0)    // BWT if highly compressible
             method+=","+itos(3+doe8)+"ci"+itos(1+((lowP<11?lowP-1:0)/2))+"s8,32,85";
         // LZMA
         else if (doe8)                             // if input has been filtered then this will be worse              
@@ -9486,7 +9489,6 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
             method+=",14,7,8,0,0,128";
         else
             method+=",14,7,4,0,2,128";
-            printf("%s\n",method.c_str());
       }
     }
 
