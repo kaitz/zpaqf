@@ -1,8 +1,11 @@
 # zpaqf vs zpaq
 Kaido Orav    
-zpaqf v7.15.6f, 20.12.2025    
+zpaqf v7.15.8f, 28.05.2026    
 
-### Differences between the zpaq (v7.15) and zpaqf (v7.15.5f) compression algorithm models.
+### Differences between the zpaq (v7.15) and zpaqf (v7.15.8f) compression algorithm models.
+
+The goal of the improvements is to add new filters, improve data compression, and, if possible, reduce the time required for compression.     
+Changes in models are from level 3 (-m3) onwards. Some model parameters have been extended.
 
 zpaqf detects 1, 4, 8, 24, 32 bit bmp images and 1 bit pbm, 8 bit pgm, 24 ppm images. 
 Following types are used for special image models:    
@@ -10,24 +13,34 @@ IM1_PBM, IM8_PGM, IM24_PPM, IM1_BMP, IM4_BMP, IM8_BMP, IM24_BMP, IM32_BMP, IM_JP
 
 If the file extension matches .bmp, .pbm, .pgm, or .ppm, then the image is checked for a valid header.
 Images with byte width lower than 1024 are in solid block, assuming that they have the same width, otherwise each image is in individual block.
-In method 5 images with bit depth 8 or 24 have special models that parse the file header to find the width. Otherwise, the byte width of the image is transmitted along with the block information.    
+In method/level 5 images with bit depth 8 or 24 have special models that parse the file header to find the width. Otherwise, the byte width of the image is transmitted along with the block information.    
 Method 5 also has a special model for text.    
 
 On Windows Universal naming convention (UNC) paths are used by default when accessing files (a=add, x=extract). To extract with older (v7.15/v7.15.4f) versions of zpaq(f) ```-to``` command line option needs to be used. By renaming long paths to shorter version files can be extracted, but not into the original path. If command line option ```-to``` is not used then program prints an error message: ```path not found```    
 For zpaqfranz, when extracting files with long path, use command: ```e myarchive.zpaq -longpath```   
 
-Use sparse file mode when unpacking files larger than 32 MB. This option is hardcoded and cannot be changed from the command line.    
+Uses sparse file mode when unpacking files larger than 32 MB. This option is hardcoded and cannot be changed from the command line.    
+
+There are two new post processors:
+* WBPE - based on wbpe.cpp v1.1 - Preprocessor for text compression. (C) 2011, Dell Inc. Written by Matt Mahoney. GPL-3.
+* LZMA - LZMA SDK 26.01 (2026-04-27) - public domain. (C) 2026 Igor Pavlov.
+
+WBPE is used for text or as a prefilter for LZMA, and is used on level 3/4 (-m3,-m4). Can be selected from command line with ```-method xN,13```, where N is block size. CM model can fallow.
+
+LZMA is used on level 3 (-m3). Can be selected from command line with ```-method xN,14,L,LC,LP,PB,FB,F,G```, where N is block size, L is LZMA compression level. No CM model.    
+F and G are for filters. F=1 - for E8E9 filter, F=2 - for WBPE and G=1 for capital transform.    
 
 ### Mixer
-There are two new parameters. Previously, the mixer default value was ```m8,24``` now ```m8,24,0,0```.    
-New parameters selects how many upper bits (N3) of last byte are used as a context. Assuming that N0>8. If N3=1 then last byte is subtracted by 1.    
+There are two new parameters. Previously, the mixer default (```mN0,N1```) values were ```m8,24``` now (```mN0,N1,N2,N3```) ```m8,24,0,0```.    
+New parameters selects how many upper bits (N2) of last byte are used as a context. Assuming that N0>8.    
+If N3=1 then last byte is subtracted by 1.    
 
 ### SSE - Secondary Symbol Estimator
-Has a new parameter. Before default values for SSE was ```s8,32,255``` now ```s8,32,255,0```.    
-Last parameters selects how many last bytes to skip before we use them as contexts.   
+Has a new parameter. Before default (```sN0,N1,N2```) values for SSE were ```s8,32,255``` now  (```sN0,N1,N2,N3```) ```s8,32,255,0```.    
+Last parameter (N3) selects how many last bytes to skip before we use them as contexts.   
 
 ### Indirect o1/o2 with or without n'th byte
-Default values for n contexts are ```n0,0,0,1,0```.    
+Default values (```nN0,N1,N2,N3,N4```) for n contexts are ```n0,0,0,1,0```.    
 Context predictors can be ICM or ISSE.    
 Parameters from left to right are:    
 
@@ -52,14 +65,27 @@ Method 3 uses special types to select the model of the identified data, such as:
 IM1_PBM, IM1_BMP: ```-method x0,c0.0.7.K.255``` (where J=byte width, K=J-1+999)    
 IM4_BMP: ```-method x0,0c0.0.15.K.255``` (where J=byte width, K=J-1+999)    
 IM8_PGM, IM8_BMP, IM24_PPM, IM24_BMP: ```-method x0,c0.0.255.K.255n1,8,0,0,1n1,8,0,3,1Mm``` (where J=byte width, K=J-1+999, if multiple files in blok M=a192)    
-IM32_BMP: ```-method x0,c0.4.255i2,3,3c0.0.511.K.255m11,24,3s16,24,255,3``` (where J=byte width, K=J-1+999)     
-IM_JPG: ```-method x0,c0.0.15.255i2n1,1,0,1,0```     
-IM_AVI: ```-method x0,c0.0.15.255i2n1,1,0,1,0```     
+IM_JPG, IM_AVI: ```-method x0,c0.0.15.255i2n1,1,0,1,0```     
 
 0..5: ```-method x0,0``` (no compression).    
-6..11: ```-method x6,1.4.0.3.25``` (fast LZ77).    
-12..159: and not text: ```-method x6,2.12.0.7.27.1c0.0.511i2s8,32,65``` (order 2 LZ77 with SA).    
-160..255: or text and 12..255: ```-method x6,3ciJs8,32,85``` (where M=period<10?period/2:0, J=1+M) (BWT with period if any).    
+6..199: and E8E9 ```-method x6,14,7,8,0,1,144,1``` (E8E9+LZMA)    
+100..255: and text ```-method x6,14,7,8,0,P,144,2,1``` (where P=period?1:0) (WBPE(+CAP)+LZMA)    
+200..255: and not text: ```-method x6,3ciJs8,32,85``` (where M=period<11?(period-1):0, J=1+M) (BWT with period if any).    
+6..125: odd period and not text: ```-method x6,14,7,4,0,2,128``` (LZMA)    
+6..125: period and not text: ```-method x6,14,7,LC,LP,PB,128``` (where G=log2(period-1)+/2, LC=8/(G>2?2:G), LP=G/(period>=256?2:1), PB=G-(period>12?1:0)) (LZMA)    
+110..199: ```-method x6,14,7,8,0,0,128``` (LZMA)    
+6..199: ```-method x6,14,7,4,0,2,128``` (LZMA)    
+```
+Different unique values for period data
+Period LC, LP, PB
+   3:   4,  0,  2
+   4:   8,  1,  1
+  10:   4,  2,  2
+  14:   4,  2,  1
+  34:   4,  3,  2
+ 130:   4,  4,  3
+ 256:   4,  2,  3
+```
 
 ### Differences in method 4
 
@@ -81,7 +107,8 @@ IM_AVI: ```-method x0,c0.0.15.255i2,1n1,1,0,1,0```
 25..224: ```-method x6,0ci1,1,1,3an0,17,2,1,1m12,24,4```    
 25..224: and text: ```-method x6,0c256.0.255i2,1,1,2aw2,65,26,223,191,0m11,10,4,1```    
 25..224: and text with indirect: ```-method x6,0c256.0.255i2,1,3aw1,65,26,223,191,0n1,24,8,1,1m11,10,4,1```    
-225..255: ```-method x6,3ciN``` (where M=period<10?period:0, N=1+M) (BWT).    
+120..225: text or text like: ```-method x6,13ci2,3,2n1,24,8,3,1a24,1,1ts16,20,255``` (WBPE+CM)    
+225..255: ```-method x6,3ciN``` (where M=period<10?period:0, N=1+M) (BWT+CM).    
 
 ### Differences in method 5
 
