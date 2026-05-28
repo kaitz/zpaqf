@@ -6899,7 +6899,7 @@ class WBPE: public libzpaq::Reader {
   const unsigned n;           // input length
   unsigned i;                 // current location in in (0 <= i < n)
   unsigned rpos, wpos;        // read, write pointers
-  enum {BUFSIZE=1<<14};       // output buffer size
+  enum {BUFSIZE=1<<15};       // output buffer size
   unsigned char buf[BUFSIZE]; // output buffer
   static const int LEN=19;    // maximum string length
   int idx[256];               //  fast lookup index
@@ -7394,7 +7394,7 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
   assert(pb>=0  && pb<=4);
   assert(fb>=5 && fb<=273);
   assert(n<=(1u<<20<<args[0]));
-  if (dictSize<0x10000) dictSize=0x10000; // 64kb
+  assert(dictSize>=0x10000); // 64kb
   /*int lplc=(1<<(lc+lp));
   printf("Level: %d Dict: %d Parms: lc %d lp %d pb %d  fb %d state %dkb. Exe %d, WBPE %d\n",level,dictSize,lc,lp,pb,fb,(4+lplc+lplc/2),args[2]&1,args[2]&2);*/
   // e8e9 transform
@@ -7409,13 +7409,13 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
       wpbuf.setLimit((1<<lg((1<<args[0])*1024*1024))/2);
       WBPE wbpe(inbuf, wpargs);
       int wc=0;
-      const int bs=0x100000;
+      const int bs=0x8000;
       StringBuffer rb(bs);
       rb.write(0, bs);
       while ((wc=wbpe.read((char*)rb.data(), bs))>0) {
           if ((wpbuf.size()+wc)>=n) { // fail if larger then input
               wpfail=true;
-              break;
+              break; 
           }
           wpbuf.write((char*)rb.data(), wc);
       }
@@ -7683,8 +7683,8 @@ std::string makeConfig(const char* method, int args[]) {
       "            a=r 14\n"
       "            a> 0 ifl                                      (if (r[14]) )\n"
       "                b=r 5 a=r 20 a&=b                         (r[18] = r[20] & r[5])\n"
-      "                b=r 4 a<<=b d=a a= 8 b=r 4 a-=b b=a \n"
-      "                a=r 12 a>>=b b=a a=d a|=b r=a 18          (r[18] = r[18] << r[4] | r[12] >> (8 - r[4]))\n"
+      "                b=r 4 a<<=b d=a a= 8 a-=b b=a \n"
+      "                a=r 12 a>>=b a|=d r=a 18                  (r[18] = r[18] << r[4] | r[12] >> (8 - r[4]))\n"
       "                b=r 27 a*=b b=r 26 a+=b r=a 34            (p3 = r[26] + r[27] * r[18])\n"
       "                a=0 r=a 19 r=a 16                         (r[19] = r[16] = 0)\n"
       "                a=r 13 a> 6 if                            (if ( r[13] >= 7) )\n"
@@ -7938,7 +7938,7 @@ std::string makeConfig(const char* method, int args[]) {
       "                            a=r 11 a>>= 5 b=a a=r 9 a-=b b=r 25 a&=b *d=a (*p1=r[9]-(r[11]>>5))\n"
       /*"                                                                   (decode bit end)\n"*/
       "                            a=r 12 a<<= 1 r=a 12                   (r[12] <<= 1)\n"
-      "                            a=r 14 a== 0 a=r 12 if  a++ r=a 12 endif (if (r[14]==0) r[12]++)\n"
+      "                            a=r 14 a== 0 a=r 12 if a++ r=a 12 endif (if (r[14]==0) r[12]++)\n"
       "                            b=r 17\n"
       "                        a<b while                                  (while (r[12] < r[17]))\n"
       "                        a-=b r=a 12                                (r[12] -= r[17])\n"
@@ -7949,7 +7949,7 @@ std::string makeConfig(const char* method, int args[]) {
       "                            a= 1 a<<=b r=a 16                        (r[16] = 1 << r[17])\n"
       "                            a=r 12 a&= 1 a|= 2 a<<=b r=a 0           (r[0] = (2 | (r[12] & 1)) << r[17])\n"
       "                            a=b a< 6 if                             (if (r[17] < 6) p3 = r[31] + r[0] - r[12])\n"
-      "                                a=r 31 b=r 0 a+=b  b=r 12 a-=b r=a 34\n"
+      "                                a=r 31 b=r 0 a+=b b=r 12 a-=b r=a 34\n"
       "                            else\n"
       "                                do\n"
       "                                     a=r 7 a>>= 24 a== 0 if        (if ((r[7] >> 24)==0))\n"
@@ -7957,14 +7957,14 @@ std::string makeConfig(const char* method, int args[]) {
       "                                        a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
       "                                        r=a 8 a=c r=a 36           (r[8] = r[8] << 8 | *c)\n"
       "                                    endif\n"
-      "                                    a=r 16 a>>= 1 r=a 16  \n"
+      "                                    a=r 16 a>>= 1 r=a 16 c=a \n"
       "                                    a=r 7 a>>= 1 r=a 7 b=a         (r[16] >>= 1 r[7] >>= 1)\n"
       "                                    a=r 8                          (if (r[8] >= r[7]))\n"
       "                                    a<b ifnot \n"
       "                                        a-=b r=a 8 a=r 0 \n"
-      "                                        b=r 16 a+=b r=a 0          (r[8] -= r[7], r[0] += r[16])\n"
+      "                                        a+=c r=a 0                 (r[8] -= r[7], r[0] += r[16])\n"
       "                                    endif\n"
-      "                                    a=r 16 a-= 16\n"
+      "                                    a=c a-= 16\n"
       "                                a> 0 while                          (while (r[16] != 16))\n"
       "                                a=r 32 r=a 34                       (p3 = r[32])\n"
       "                            endif\n"
