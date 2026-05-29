@@ -1,4 +1,4 @@
-/* libzpaq.cpp - LIBZPAQ Version 7.15.8f implementation - May. 28, 2026.
+/* libzpaq.cpp - LIBZPAQ Version 7.15.8f implementation - May. 29, 2026.
 
   libdivsufsort.c for divsufsort 2.00, included within, is
   (C) 2003-2008 Yuta Mori, all rights reserved.
@@ -3248,8 +3248,8 @@ int ZPAQL::assemble() {
 
   const U8* hcomp=&header[hbegin];
   const int hlen=hend-hbegin+2;
-  const int msize=m.size();
-  const int hsize=h.size();
+  const size_t msize=m.size();
+  const size_t hsize=h.size();
   static const int regcode[8]={2,6,7,5}; // a,b,c,d.. -> edx,esi,edi,ebp,eax..
   Array<int> it(hlen);            // hcomp -> rcode locations
   int done=0;  // number of instructions assembled (0..hlen)
@@ -3485,7 +3485,7 @@ int ZPAQL::assemble() {
         // {a,b,c,d}={*b,*c}: load source into ddd
         if (op==59 || (op>=64 && op<240 && op%8>=4 && op%8<7)) {
           put2(0x89c0+8*regcode[sss-3+(op==59)]);  // mov eax, {esi,edi,ebp}
-          const int sz=(sss==6?hsize:msize)-1;
+          const size_t sz=(sss==6?hsize:msize)-1;
           if (sz>=128) put1a(0x25, sz);            // and eax, dword msize-1
           else put3(0x83e000+sz);                  // and eax, byte msize-1
           const int move=(op>=64 && op<112); // = or else ddd is eax
@@ -3504,7 +3504,7 @@ int ZPAQL::assemble() {
         // Load destination address *b, *c, *d or hashd (*d) into ecx
         if ((op>=32 && op<56 && op%8<5) || (op>=96 && op<120) || op==60) {
           put2(0x89c1+8*regcode[op/8%8-3-(op==60)]);// mov ecx,{esi,edi,ebp}
-          const int sz=(ddd==6||op==60?hsize:msize)-1;
+          const size_t sz=(ddd==6||op==60?hsize:msize)-1;
           if (sz>=128) put2a(0x81e1, sz);   // and ecx, dword sz
           else put3(0x83e100+sz);           // and ecx, byte sz
           if (op/8%8==6 || op==60) { // *d
@@ -6899,7 +6899,7 @@ class WBPE: public libzpaq::Reader {
   const unsigned n;           // input length
   unsigned i;                 // current location in in (0 <= i < n)
   unsigned rpos, wpos;        // read, write pointers
-  enum {BUFSIZE=1<<15};       // output buffer size
+  enum {BUFSIZE=1<<18};       // output buffer size
   unsigned char buf[BUFSIZE]; // output buffer
   static const int LEN=19;    // maximum string length
   int idx[256];               //  fast lookup index
@@ -7342,12 +7342,12 @@ Returns:
 */
 class LZMA: public libzpaq::Reader {
   unsigned char* in;    // input pointer
-  unsigned n;           // input length
-  std::vector<unsigned char> outb;
-  unsigned i;                 // current location in in (0 <= i < n)
-  unsigned rpos, wpos;        // read, write pointers
+  size_t n;           // input length
+  unsigned char* outb;
+  size_t rpos, wpos;        // read, write pointers
   int level;
-  unsigned dictSize;
+  size_t dictSize;
+  StringBuffer sout; // set dictSize
   int lc,lp,pb,fb;
   bool wpfail;
   
@@ -7384,19 +7384,18 @@ int LZMA::read(char* p, int n) {
 LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
     in(inbuf.data()),
     n(inbuf.size()),
-    i(0),
-    rpos(0), wpos(0),level(args[2]/4),dictSize((1<<lg((1<<args[0])*1024*1024))/2),
+    rpos(0), wpos(0),level(args[2]/4),dictSize(size_t(1)<<(size_t(args[0]+20))),sout(dictSize),
     lc(args[3]),lp(args[4]),pb(args[5]),fb(args[6]),wpfail(false) {
-  assert(args[0]>=0);
+  assert(args[0]>=0 && args[0]<=11);
   assert(level>=0  && level<=9);
   assert(lc>=0  && lc<=8);
   assert(lp>=0  && lp<=4);
   assert(pb>=0  && pb<=4);
   assert(fb>=5 && fb<=273);
   assert(n<=(1u<<20<<args[0]));
-  assert(dictSize>=0x10000); // 64kb
+  assert(dictSize>=size_t(0x10000)); // 64kb
   /*int lplc=(1<<(lc+lp));
-  printf("Level: %d Dict: %d Parms: lc %d lp %d pb %d  fb %d state %dkb. Exe %d, WBPE %d\n",level,dictSize,lc,lp,pb,fb,(4+lplc+lplc/2),args[2]&1,args[2]&2);*/
+  printf("Level: %d Dict: %x Parms: lc %d lp %d pb %d  fb %d state %dkb. Exe %d, WBPE %d\n",level,dictSize,lc,lp,pb,fb,(4+lplc+lplc/2),args[2]&1,args[2]&2);*/
   // e8e9 transform
   if (args[2]&1) e8e9(inbuf.data(), n);
 #ifdef GPL
@@ -7405,11 +7404,12 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
       int wpargs[9]={0};
       wpargs[0]=args[0]; // mem
       wpargs[2]=args[8]; // cap=1
-      StringBuffer wpbuf;
-      wpbuf.setLimit((1<<lg((1<<args[0])*1024*1024))/2);
+      StringBuffer wpbuf(dictSize);
+      wpbuf.write(0, 1);
+      wpbuf.resize(0);
       WBPE wbpe(inbuf, wpargs);
       int wc=0;
-      const int bs=0x8000;
+      const int bs=1<<18;
       StringBuffer rb(bs);
       rb.write(0, bs);
       while ((wc=wbpe.read((char*)rb.data(), bs))>0) {
@@ -7433,9 +7433,12 @@ LZMA::LZMA(StringBuffer& inbuf, int args[], const unsigned* sap):
 void LZMA::CompressLZMA() {
   size_t propsSize=LZMA_PROPS_SIZE;
   size_t destLen=dictSize; // should be n
-  outb.resize(propsSize+8+destLen);
+  
+  sout.write(0, 1); // alloc dictSize
+  sout.resize(0);
+  outb=sout.data();
   int res = LzmaCompress(
-    &outb[LZMA_PROPS_SIZE+8], &destLen,
+    &outb[LZMA_PROPS_SIZE+4], &destLen,
     &in[0], n,
     &outb[0], &propsSize,
     level, dictSize, lc, lp, pb, fb, -1);
@@ -7446,12 +7449,12 @@ void LZMA::CompressLZMA() {
   else if (res==SZ_ERROR_OUTPUT_EOF) error("LZMA - output buffer overflow");
   else if (res==SZ_ERROR_THREAD) error("LZMA - multithreading error");
   else if (res!=SZ_OK) error("LZMA - error");
-  int64_t flen=n;
-  for (int i=0; i<8; i++)
+  int32_t flen=n;
+  for (int i=0; i<4; i++)
       outb[i+LZMA_PROPS_SIZE]=(unsigned char)(flen>>(8*i)); // add file size so the decoder knows explicitly when the data ends
-  if (wpfail) outb[8+LZMA_PROPS_SIZE]=1;                    // set WBPE to failed state for ZPAQL model
-  outb.resize(propsSize+8+destLen);
-  wpos=outb.size();
+  if (wpfail) outb[4+LZMA_PROPS_SIZE]=1;                    // set WBPE to failed state for ZPAQL model
+  sout.resize(propsSize+4+destLen);
+  wpos=sout.size();
   // This should not happen. 
   // Fail if already compressed data is selected for compression in the model selection.
   // Model has memory up to dictSize size and decompression will fail.
@@ -7519,7 +7522,7 @@ std::string makeConfig(const char* method, int args[]) {
       int lclp=(1<<(args[3]+args[4]));
       lclp=(4+lclp+lclp/2);
       int state=lg(lclp*1024);
-      hdr="comp 0 0 "+itos(state)+" "+itos(lg((1 <<args[0])*1024*1024)+0)+" "; // set ph pm values
+      hdr="comp 0 0 "+itos(state)+" "+itos(args[0]+20+1)+" "; // set ph pm values
       pcomp=
       "pcomp lzma c ;\n"
       /*"(\n"
@@ -7572,7 +7575,7 @@ std::string makeConfig(const char* method, int args[]) {
       "        a=r 24 (hdr state - 0 read header, 1 read data, 2 decode, 3 fail/end)\n"
       "        a< 2 ifl    (read header, init)\n"
       "            a== 0 ifl\n"
-      "                a=c a< 18 ifl                       (hdr: 1+4+8+1+4 (parameters, dict, size, 0, code)) \n"
+      "                a=c a< 14 ifl                       (hdr: 1+4+8+1+4 (parameters, dict, size, 0, code)) \n"
       "                    halt\n"
       "                elsel \n"
       "                    a= 255 b=a \n"
@@ -7597,19 +7600,16 @@ std::string makeConfig(const char* method, int args[]) {
       "                       halt\n"
       "                    endif\n"
       /*"\n"*/
-      "                    a=c a+= 4 c=a  a=0              (dict size)\n"
-      "                    a+=*c a<<= 8 c-- a+=*c a<<= 8\n"
-      "                    c-- a+=*c a<<= 8 c-- a+=*c c--\n"
+      "                    a=c a+= 4 c=a a= 8 b=a          (dict size)\n"
+      "                    a=*c a<<=b c-- a+=*c a<<=b\n"
+      "                    c-- a+=*c a<<=b c-- a+=*c c--\n"
       "                    r=a 23\n"
-      "                    a=c a+= 4 c=a\n"
       /*"\n"*/
-      "                    a=c a+= 8 c=a a=0               (max size)\n"
-      "                    a+=*c a<<= 8 c-- a+=*c a<<= 8\n"
-      "                    c-- a+=*c a<<= 8 c-- a+=*c c--\n"
-      "                    a+=*c a<<= 8 c-- a+=*c a<<= 8\n"
-      "                    c-- a+=*c a<<= 8 c-- a+=*c c--\n"
+      "                    a=c a+=b c=a                    (max size)\n"
+      "                    a=*c a<<=b c-- a+=*c a<<=b\n"
+      "                    c-- a+=*c a<<=b c-- a+=*c c--\n"
       "                    r=a 22                          (-1 if stream has EOF)\n"
-      "                    a=c a+= 8 c=a\n"
+      "                    a=c a+= 4 c=a\n"
       /*"\n"*/
       "                    a=0 c++ a=*c r=a 38             (flag 0 - LZMA | WBPE+LZMA, 1 - LZMA if WBPE failed )\n"
       "                    a> 1 if                 \n"
@@ -7617,12 +7617,11 @@ std::string makeConfig(const char* method, int args[]) {
       "                        halt\n"
       "                    endif\n"
       /*"\n"*/
-      "                    a=0                             (code)  \n"
-      "                    a+=*c c++ a<<= 8 a+=*c c++ a<<= 8\n"
-      "                    a+=*c c++ a<<= 8 a+=*c c++ a<<= 8\n"
+      "                    a=*c c++ a<<=b a+=*c c++ a<<=b  (code) \n"
+      "                    a+=*c c++ a<<=b a+=*c c++ a<<=b\n"
       "                    a+=*c c++\n"
       "                    r=a 8\n"
-      "                    \n"
+      /*"                    \n"*/
       "                    a=r 4 b=r 5 a+=b b=a a=r 27\n"
       "                    a<<=b b=r 26 a+=b c=a           (num of probs=val1+(val2<<(lc+lp)))\n"
       "                    a= 4 a<<= 8 b=a d=0             (1024)\n"

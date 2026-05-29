@@ -51,6 +51,7 @@ Possible options:
   -o         Name of output executable.
   /EHsc      Enable exception handing in VC++ (required).
   advapi32.lib  Required for libzpaq in VC++.
+  libLzmaLib.lib  Required for libzpaq.
 
 */
 #define _FILE_OFFSET_BITS 64  // In Linux make sizeof(off_t) == 8
@@ -3144,10 +3145,11 @@ ThreadReturn decompressThread(void* arg) {
       in.seek(b.offset, SEEK_SET);
       libzpaq::Decompresser d;
       d.setInput(&in);
+      out.reset();            // free mem if any is used
       out.resize(0);
       assert(b.usize>=0);
       assert(b.usize<=0xffffffffu);
-      out.setLimit(b.usize);
+      out.setLimit(b.usize);  // realloc memory
       d.setOutput(&out);
       if (!d.findBlock(&mem)) error("archive block not found");
       if (mem>job.maxMemory) job.maxMemory=mem;
@@ -3232,6 +3234,21 @@ ThreadReturn decompressThread(void* arg) {
       // Look for pointers to this block
       const vector<unsigned>& ptr=p->second.ptr;
       int64_t offset=0;  // write offset
+      
+      // Pre-calculate fragment size sums
+      const vector<HT> &ht=job.jd.ht;
+      vector<uint64_t> bfs;
+      bfs.resize(ht.size());
+      uint64_t bfsq=0;
+      for (unsigned k=0; k<ht.size(); ++k) {
+          //assert(k>0);
+          //assert(k<ht.size());
+          //if (ht[k].usize<0) error("streaming fragment in file");
+          //assert(ht[k].usize>=0);
+          if (ht[k].usize>0) bfsq+=ht[k].usize;
+          bfs[k]=bfsq;
+      }
+
       for (unsigned j=0; j<ptr.size(); ++j) {
         if (ptr[j]<b.start || ptr[j]>=b.start+b.extracted) {
           offset+=job.jd.ht[ptr[j]].usize;
@@ -3309,40 +3326,39 @@ ThreadReturn decompressThread(void* arg) {
 
         // Find block offset of fragment
         uint64_t q=0;  // fragment offset from start of block
-        for (unsigned k=b.start; k<ptr[j]; ++k) {
-          assert(k>0);
-          assert(k<job.jd.ht.size());
-          if (job.jd.ht[k].usize<0) error("streaming fragment in file");
-          assert(job.jd.ht[k].usize>=0);
-          q+=job.jd.ht[k].usize;
+        const vector<HT> &ht=job.jd.ht;
+        if (b.start<ptr[j]) {
+            q=bfs[ptr[j]-1]-(b.start>0?bfs[b.start-1]:0);
         }
-        assert(q+job.jd.ht[ptr[j]].usize<=out.size());
+        assert(q+ht[ptr[j]].usize<=out.size());
 
         // Combine consecutive fragments into a single write
         assert(offset>=0);
         ++p->second.data;
-        uint64_t usize=job.jd.ht[ptr[j]].usize;
+        uint64_t usize=ht[ptr[j]].usize;
         assert(usize<=0x7fffffff);
-        assert(b.start+b.size<=job.jd.ht.size());
+        assert(b.start+b.size<=ht.size());
         while (j+1<ptr.size() && ptr[j+1]==ptr[j]+1
                && ptr[j+1]<b.start+b.size
-               && job.jd.ht[ptr[j+1]].usize>=0
-               && usize+job.jd.ht[ptr[j+1]].usize<=0x7fffffff) {
+               && ht[ptr[j+1]].usize>=0
+               && usize+ht[ptr[j+1]].usize<=0x7fffffff) {
           ++p->second.data;
           assert(p->second.data<=int64_t(ptr.size()));
-          assert(job.jd.ht[ptr[j+1]].usize>=0);
-          usize+=job.jd.ht[ptr[++j]].usize;
+          assert(ht[ptr[j+1]].usize>=0);
+          usize+=ht[ptr[++j]].usize;
         }
         assert(usize<=0x7fffffff);
         assert(q+usize<=out.size());
 
         // Write the merged fragment unless they are all zeros and it
         // does not include the last fragment.
-        uint64_t nz=q;  // first nonzero byte in fragments to be written
-        while (nz<q+usize && out.c_str()[nz]==0) ++nz;
-        if (!job.jd.dotest && (nz<q+usize || j+1==ptr.size())) {
-          fseeko(job.outf, offset, SEEK_SET);
-          fwrite(out.c_str()+q, 1, usize, job.outf);
+        if (!job.jd.dotest) {
+          uint64_t nz=q;  // first nonzero byte in fragments to be written
+          while (nz<q+usize && out.c_str()[nz]==0) ++nz;
+          if ((nz<q+usize || j+1==ptr.size())) {
+            fseeko(job.outf, offset, SEEK_SET);
+            fwrite(out.c_str()+q, 1, usize, job.outf);
+          }
         }
         offset+=usize;
         lock(job.mutex);

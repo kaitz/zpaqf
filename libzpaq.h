@@ -1,4 +1,4 @@
-/* libzpaq.h - LIBZPAQ Version 7.12 header - Apr. 19, 2016.
+/* libzpaq.h - LIBZPAQ Version 7.15.8f header - May. 29, 2026.
 
   This software is provided as-is, with no warranty.
   I, Matt Mahoney, release this software into
@@ -309,7 +309,7 @@ input size is unknown.
     unsigned char* data();        // read-write access
     size_t size() const;          // number of bytes written
     size_t remaining() const;     // number of bytes to read until EOF
-    void setLimit(size_t n);      // set maximum write size
+    void setLimit(size_t n);      // set maximum write size and alloc
     void reset();                 // discard contents and free memory
     void resize(size_t n);        // truncate to n bytes
     void swap(StringBuffer& s);   // exchange contents efficiently
@@ -335,8 +335,8 @@ data() provides read-write access. Either may return NULL if size()
 is 0. write(), put(), reset(), swap(), and the destructor may
 invalidate saved pointers.
 
-setLimit() sets a maximum size. It will call error() if you try to
-write past it. The default is -1 or no limit.
+setLimit() sets a maximum size and allocs memory. It will call error()
+if you try to write past it. The default is -1 or no limit.
 
 reset() sets the size to 0 and frees memory. resize() sets the size
 to n by moving the write pointer, but does not allocate or free memory.
@@ -1416,8 +1416,8 @@ public:
   StringBuffer(size_t n=0):
       p(0), al(0), wpos(0), rpos(0), limit(size_t(-1)), init(n>128?n:128) {}
 
-  // Set output limit
-  void setLimit(size_t n) {limit=n;}
+  // Set output limit and alloc mem
+  void setLimit(size_t n) {limit=n; lengthen(n);}
 
   // Free memory
   ~StringBuffer() {if (p) free(p);}
