@@ -23,7 +23,7 @@ On Windows Universal naming convention (UNC) paths are used by default when acce
 For zpaqfranz, when extracting files with long path, use command: ```e myarchive.zpaq -longpath```   
 
 Uses sparse file mode when unpacking files larger than 32 MB. This option is hardcoded and cannot be changed from the command line.    
-
+### Filters
 There are two new post processors:
 * WBPE - based on wbpe.cpp v1.1 - Preprocessor for text compression. (C) 2011, Dell Inc. Written by Matt Mahoney. GPL-3.
 * LZMA - LZMA SDK 26.01 (2026-04-27) - public domain. (C) 2026 Igor Pavlov.
@@ -137,9 +137,11 @@ IM_AVI: ```-method x0,c0.0.31.511i2,1ams16,18,63```
 3..255 low period, high period(1-10,>30): ```-method x6,0w1i1c256ciJ,Kn,Lac0,0,Y,255i1c0,Wi1c0,0,M,255i1c0,Li1mm16ts19t0``` (where L=low period J=2, Kn=J+1, Kn=K(n-1)+1 ... while Kn<L-K(n-1), M=L+999; W=high period Y=W+999)    
 
 ## Larger models
-[Large models for different data types](doc/Large models.md)
+[Large models for different data types](doc/Large-models.md)
 
-## BOOK1
+## Large tests
+[Large test on 6 corpuses](doc/Tests.md)
+#### BOOK1
 <pre>
 Method     v7.15.8f     v7.15
 ---------  --------   --------
@@ -149,6 +151,3 @@ Method     v7.15.8f     v7.15
 -method 4   205797     210188
 -method 5   199094     200369
 </pre>
-
-## Large tests
-[Large test on 6 corpuses](doc/Tests.md)
