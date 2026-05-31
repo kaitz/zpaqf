@@ -7834,10 +7834,10 @@ std::string makeConfig(const char* method, int args[]) {
       "                        a=r 0 r=a 1 a=r 17 r=a 0            (r[1] = r[0] r[0] = r[17])\n"
       "                    endif\n"
       "                    a=r 15 a== 0 if                         (if (r[15]==0) p1 = r[29], r[13] |= 8)\n"
-      "                        a=r 29 r=a 33 a=r 13 a|= 8\n"
+      "                        a=r 29 r=a 33 a= 8\n"
       "                    else                                    (else r[13] |= 9)\n"
-      "                        a=r 13 a|= 9 \n"
-      "                    endif r=a 13\n"
+      "                        a= 9 \n"
+      "                    endif b=r 13 a|=b r=a 13\n"
       "                endif\n"
       /*"            \n"*/
       "                a=r 15 a== 0 ifl                            (if (r[15]==0) )\n"
@@ -7885,7 +7885,7 @@ std::string makeConfig(const char* method, int args[]) {
       /*"                                                            (BIT TREE)\n"*/
       "                    a= 1 r=a 12                             (r[12] = 1)\n"
       "                    do\n"
-      "                        a=r 34 b=r 12 a+=b r=a 33 d=a       (p1 = p3 + r[12])\n"
+      "                        b=r 34 a+=b r=a 33 d=a              (p1 = p3 + r[12])\n"
       /*"                                                            (decode bit)\n"*/
       "                        a=r 7 a>>= 24 a== 0 if              (if ((r[7] >> 24)==0) )\n"
       "                            a=r 7 a<<= 8 r=a 7              (r[7] <<= 8)\n"
@@ -7947,21 +7947,21 @@ std::string makeConfig(const char* method, int args[]) {
       "                            a=b a< 6 if                             (if (r[17] < 6) p3 = r[31] + r[0] - r[12])\n"
       "                                a=r 31 b=r 0 a+=b b=r 12 a-=b r=a 34\n"
       "                            else\n"
-      "                                do\n"
+      "                                d=r 8 do\n"
       "                                     a=r 7 a>>= 24 a== 0 if        (if ((r[7] >> 24)==0))\n"
       "                                        a=r 7 a<<= 8 r=a 7         (r[7] <<= 8)\n"
-      "                                        a=r 8 a<<= 8 c=r 36 a|=*c c++\n"
-      "                                        r=a 8 a=c r=a 36           (r[8] = r[8] << 8 | *c)\n"
+      "                                        a=d a<<= 8 c=r 36 a|=*c c++\n"
+      "                                        d=a a=c r=a 36             (r[8] = r[8] << 8 | *c)\n"
       "                                    endif\n"
       "                                    a=r 16 a>>= 1 r=a 16 c=a \n"
       "                                    a=r 7 a>>= 1 r=a 7 b=a         (r[16] >>= 1 r[7] >>= 1)\n"
-      "                                    a=r 8                          (if (r[8] >= r[7]))\n"
+      "                                    a=d                            (if (r[8] >= r[7]))\n"
       "                                    a<b ifnot \n"
-      "                                        a-=b r=a 8 a=r 0 \n"
-      "                                        a+=c r=a 0                 (r[8] -= r[7], r[0] += r[16])\n"
+      "                                        a-=b d=a a=r 0 \n"
+      "                                        a+=c r=a 0                   (r[8] -= r[7], r[0] += r[16])\n"
       "                                    endif\n"
       "                                    a=c a-= 16\n"
-      "                                a> 0 while                          (while (r[16] != 16))\n"
+      "                                a> 0 while  a=d r=a 8               (while (r[16] != 16))\n"
       "                                a=r 32 r=a 34                       (p3 = r[32])\n"
       "                            endif\n"
       "                            a= 1 r=a 17 r=a 12                      (r[17] = r[12] = 1)\n"
@@ -9490,7 +9490,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
             method+=",14,7,8,0,"+itos(lowP?1:0)+",144,2,1"; // WBPE(CAP)+LZMA for text
 #endif
         else  if (type>=440)
-            if (lowP)
+            if (lowP && (type&1)==0)
                 method+=",14,7,5,1,1,128";
             else
                 method+=",14,7,8,0,0,128";
