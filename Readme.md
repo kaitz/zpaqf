@@ -23,7 +23,7 @@ On Windows Universal naming convention (UNC) paths are used by default when acce
 For zpaqfranz, when extracting files with long path, use command: ```e myarchive.zpaq -longpath```   
 
 Uses sparse file mode when unpacking files larger than 32 MB. This option is hardcoded and cannot be changed from the command line.    
-### Filters
+### Transforms
 There are two new post processors:
 * WBPE - based on wbpe.cpp v1.1 - Preprocessor for text compression. (C) 2011, Dell Inc. Written by Matt Mahoney. GPL-3.
 * LZMA - LZMA SDK 26.01 (2026-04-27) - public domain. (C) 2026 Igor Pavlov.
@@ -53,15 +53,18 @@ Parameters from left to right are:
     N3 last N3'th byte (0=no bytes)
     N4 indirect width in bytes or order 1, 2 (0=1,1=2 bytes)
 
-### Differences in method 1
+[The compression algorithm is described here](doc/The-ZPAQ-Compression-Algorithm.md) 
+
+## Differences in methods
+### Method 1
 
 No change.
 
-### Differences in method 2
+### Method 2
 
 No change.
 
-### Differences in method 3
+### Method 3
 
 Method 3 uses special types to select the model of the identified data, such as:    
 
@@ -90,7 +93,7 @@ Period LC, LP, PB
  256:   4,  2,  3
 ```
 
-### Differences in method 4
+### Method 4
 
 Method 4 uses special types to select the model of the identified data, such as:    
 
@@ -113,7 +116,7 @@ IM_AVI: ```-method x0,c0.0.15.255i2,1n1,1,0,1,0```
 120..225: text or text like: ```-method x6,13ci2,3,2n1,24,8,3,1a24,1,1ts16,20,255``` (WBPE+CM)    
 225..255: ```-method x6,3ciN``` (where M=period<10?period:0, N=1+M) (BWT+CM).    
 
-### Differences in method 5
+### Method 5
 
 Method 5 uses special types to select the model of the identified data, such as:
 
@@ -136,7 +139,7 @@ IM_AVI: ```-method x0,c0.0.31.511i2,1ams16,18,63```
 3..255 mid period (11-29): ```-method x3,0w1i1c256ciK,Jac0,0,L,255i1c0,Ji1mm16ts19t0``` (where J=period, K=J/2, L=J+999)    
 3..255 low period, high period(1-10,>30): ```-method x6,0w1i1c256ciJ,Kn,Lac0,0,Y,255i1c0,Wi1c0,0,M,255i1c0,Li1mm16ts19t0``` (where L=low period J=2, Kn=J+1, Kn=K(n-1)+1 ... while Kn<L-K(n-1), M=L+999; W=high period Y=W+999)    
 
-## Larger models
+## Larger internal models
 [Large models for different data types](doc/Large-models.md)
 
 ## Large tests
