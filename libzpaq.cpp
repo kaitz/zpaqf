@@ -9461,7 +9461,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
                 break;
             }
         }
-        if (type>=800 && (type&1)==0)    // BWT if highly compressible
+        if (type>=810 && (type&1)==0 && (info&255)==0)    // BWT if highly compressible
             method+=","+itos(3+doe8)+"ci"+itos(1+((lowP<11?lowP-1:0)/2))+"s8,32,85";
         // LZMA
         else if (doe8)                             // if input has been filtered then this will be worse              
@@ -9490,7 +9490,10 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
             method+=",14,7,8,0,"+itos(lowP?1:0)+",144,2,1"; // WBPE(CAP)+LZMA for text
 #endif
         else  if (type>=440)
-            method+=",14,7,8,0,0,128";
+            if (lowP)
+                method+=",14,7,5,1,1,128";
+            else
+                method+=",14,7,8,0,0,128";
         else
             method+=",14,7,4,0,2,128";
       }

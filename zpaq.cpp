@@ -1,6 +1,6 @@
 // zpaq.cpp - Journaling incremental deduplicating archiver
 
-#define ZPAQ_VERSION "7.15.8f"
+#define ZPAQ_VERSION "7.15.9f"
 /*
   This software is provided as-is, with no warranty.
   I, Matt Mahoney, release this software into
@@ -2228,6 +2228,34 @@ struct WriterPair: public libzpaq::Writer {
   WriterPair(): a(0), b(0) {}
 };
 
+enum FETypes {
+    FE_NONE=0,
+    FE_JPG=1,
+    FE_PNG=2,
+    FE_JXL=3,
+    FE_VID=4,
+    FE_BMP=5,
+    FE_RAW=6,
+    FE_PM=7,
+};
+
+struct Extension {
+    const std::string e;
+    const FETypes     t;
+};
+
+static const size_t ExtCapacity=11;
+
+static const Extension extension[ExtCapacity]={
+    {".jpg", FE_JPG},{".jpeg", FE_JPG},
+    {".png", FE_PNG},
+    {".jxl", FE_JXL},
+    {".mkv", FE_VID},{".avi", FE_VID},
+    {".bmp", FE_BMP},
+    {".raw", FE_RAW},
+    {".pgm", FE_PM},{".pbm", FE_PM},{".ppm", FE_PM},
+}; 
+
 // Add or delete files from archive. Return 1 if error else 0.
 int Jidac::add() {
 
@@ -2478,7 +2506,7 @@ int Jidac::add() {
   writeJidacHeader(&out, date, -1, htsize);
   const int64_t header_end=out.tell();
   int pfData=0,imbWidth=0;
-  SpecialType pfState=IM_NONE,isBMP=IM_NONE;
+  SpecialType pfState=IM_NONE,isIMAGE=IM_NONE;
   int info=0;
   // Compress until end of last file
   assert(method!="");
@@ -2493,7 +2521,7 @@ int Jidac::add() {
   unsigned char o1prev[ON*256]={0};  // last ON order 1 predictions
   libzpaq::Array<char> fragbuf(MAX_FRAGMENT);
   vector<unsigned> blocklist;  // list of starting fragments
-  std::string pext="",ext="";
+  FETypes pext=FE_NONE,ext=FE_NONE;
   const int BUFSIZE=4096*16;  // input buffer 64k
   libzpaq::Array<char> buf(BUFSIZE);
   // For each file to be added
@@ -2502,7 +2530,6 @@ int Jidac::add() {
     int bufptr=0, buflen=0;  // read pointer and limit
     int64_t infSize = 0;
     pext=ext;
-    ext="";
     if (fi<vf.size()) {
       assert(vf[fi]->second.ptr.size()==0);
       DTMap::iterator p=vf[fi];
@@ -2523,21 +2550,27 @@ int Jidac::add() {
       }
       infSize = p->second.size;
       p->second.data=1;  // add
-      if (p->first.size()>4 ){
-          ext=p->first.substr(p->first.size() - 4);
-          std::transform(ext.begin(), ext.end(), ext.begin(),[](unsigned char c){ return std::tolower(c); });
+      std::string fext="";
+      if (p->first.size()>4) {
+          fext=p->first.substr(p->first.size() - 4);
+          std::transform(fext.begin(), fext.end(), fext.begin(),[](unsigned char c){ return std::tolower(c); });
+      }
+      ext=FE_NONE;
+      if (fext.size()>3) { // assume ext lenght is at least 4 bytes, see extension
+        for (unsigned i=0; i<ExtCapacity; ++i) { 
+           if (extension[i].e==fext) {
+               ext=extension[i].t;
+               break;
+           }
+        }
       }
     }
 
     // Read fragments
     int64_t fsize=0;  // file size after dedupe
-    isBMP=pfState;
+    isIMAGE=pfState;
     info=imbWidth;
     pfState=IM_NONE,imbWidth=0;
-    bool isFBMP=ext==".bmp";
-    bool isFJPG=(ext==".jpg" || ext=="jpeg");
-    bool isFMKV=ext==".mkv"|| ext==".avi";
-    bool isFBPM=(ext==".pgm" || ext==".pbm" || ext==".ppm");
     for (unsigned fj=0; true; ++fj) {
       int64_t sz=0;  // fragment size;
       unsigned hits=0;  // correct prediction count
@@ -2554,7 +2587,7 @@ int Jidac::add() {
           if (bufptr>=buflen) bufptr=0, buflen=fread(&buf[0], 1, BUFSIZE, in);
           // detect BMP 1,4,8,24 bit at level 3 and up
           if (level>2 && fsize==0 && bufptr==0 && pfState==IM_NONE) {
-           if (isFBMP==true && buflen==BUFSIZE) {
+           if (ext==FE_BMP && buflen==BUFSIZE) {
               zpBMFILEHEADER &bmHdr=(zpBMFILEHEADER&)buf;
               zpBMOSFILEHEADER &bmHdr1=(zpBMOSFILEHEADER&)buf;
               if (bmHdr.bfType==0x4d42 && bmHdr.bfSize==infSize && blocksize>bmHdr.bfSize && bmHdr.bfSize>16 &&
@@ -2594,7 +2627,7 @@ int Jidac::add() {
               }
           }
           // multiline pgm pbm ppm
-          else if (isFBPM==true && buflen==BUFSIZE) {
+          else if (ext==FE_PM && buflen==BUFSIZE) {
               std::string hdr=std::string(&buf[0], 3);
               if (hdr=="P5\n") pfState=IM8_PGM;
               else if (hdr=="P6\n") pfState=IM24_PPM;
@@ -2650,7 +2683,7 @@ int Jidac::add() {
               else if (wi && hi && li==0 && pfState==IM1_PBM) imbWidth=(wi+7)/8,pfData=imbWidth*hi+i+1;
               else if (wi && hi && li==255 && pfState==IM24_PPM) imbWidth=wi*3,pfData=wi*3*hi+i+1;
               else pfState=IM_NONE;
-          } else if (isFJPG==true && buflen<=BUFSIZE && buflen>512) {
+          } else if (ext==FE_JPG && buflen<=BUFSIZE && buflen>512) {
               if ((unsigned char)buf[0]==0xFF && (unsigned char)buf[1]==0xD8 && (unsigned char)buf[2]==0xFF && (unsigned char)(buf[3]&0xf0)==0xE0) {
                   pfState=IM_JPG;
                   pfData=infSize;
@@ -2660,7 +2693,7 @@ int Jidac::add() {
                   pfData=0;
                   imbWidth=0;
               }
-          } else if (isFMKV==true && buflen<=BUFSIZE && buflen>512) { //avi mov jpeg mp4 mkv?
+          } else if (ext==FE_VID && buflen<=BUFSIZE && buflen>512) { //avi mov jpeg mp4 mkv?
               if ((unsigned char)buf[0]==0x52 && (unsigned char)buf[1]==0x49 && (unsigned char)buf[2]==0x46 && (unsigned char)buf[3]==0x46 && //RIFF
                    (unsigned char)buf[112]==0x6d && (unsigned char)buf[113]==0x6a && (unsigned char)buf[114]==0x70 && (unsigned char)buf[115]==0x67  ) { //mjpg
                   pfState=IM_AVI;
@@ -2673,7 +2706,7 @@ int Jidac::add() {
               }
           }
               // Force new type if present
-              if (frags<1 && pfState!=IM_NONE) info=imbWidth, isBMP=pfState;
+              if (frags<1 && pfState!=IM_NONE) info=imbWidth, isIMAGE=pfState;
           }
           
           // process fragment
@@ -2768,12 +2801,16 @@ int Jidac::add() {
         }
         if (sb.size()+sz+80+frags*4>=blocksize) newblock=true; // full?
         if (fi==vf.size()) newblock=true;  // last file?
-        // foce new block before and after BMP image
+        // foce new block before and after special type
         if (fsize==0) {
-            if (isBMP && (imbWidth!=info || (imbWidth/3)>1024)) newblock=true; // file was BMP
+            if (isIMAGE && (imbWidth!=info || (imbWidth/3)>1024)) newblock=true; // file was BMP
             else if (pfData && sb.size()>0 && (imbWidth!=info || (imbWidth/3)>1024)) newblock=true; // insert first BMP fragment
-            else if (level>2 && isFJPG==false && pext==".jpg") newblock=true;
-            else if (level>2 && isFMKV==false && (pext==".mkv" || pext==".avi")) newblock=true;
+            else if (level>2) {
+                if (ext!=FE_JPG && pext==FE_JPG) newblock=true;
+                else if (ext!=FE_VID && pext==FE_VID) newblock=true;
+                else if ((ext!=FE_RAW && pext==FE_RAW) || (pext!=FE_RAW && ext==FE_RAW)) newblock=true; // after and before
+                else if ((ext!=FE_JXL && pext==FE_JXL) || (pext!=FE_JXL && ext==FE_JXL)) newblock=true; // after and before
+            }
         }
         if (frags<1) newblock=false;  // block is empty?
         // Pad sb with fragment size list, then compress
@@ -2787,7 +2824,7 @@ int Jidac::add() {
           string m=method;
           if (isdigit(method[0]))
             m+=","+itos(redundancy/(sb.size()/256+1))
-                 +","+itos((exe>frags)*2+(text>frags)+(files>1)*4)+"," +itos(isBMP)+"," + itos(info+(info==0?(exe>255?255:exe)*255+(text>255?255:text):0));
+                 +","+itos((exe>frags)*2+(text>frags)+(files>1)*4)+"," +itos(isIMAGE)+"," + itos(info+(info==0?(exe>255?255:exe)*255+(text>255?255:text):0));
           string fn="jDC"+itos(date, 14)+"d"+itos(ht.size()-frags, 10);
           print_progress(total_size, total_done, summary);
           if (summary<=0)
