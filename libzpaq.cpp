@@ -9417,8 +9417,14 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
         method+=",c0.0.15."+itos(info-2+1000)+".255";
       else if (special==IM_JPG)
         method+=",c0.0.15.255i2n1,1,0,1,0";
-        else if (special==IM_AVI)
+      else if (special==IM_MP3)
+        method+=",c0.0.15.255i1n1,1,0,1,1";
+      else if (special==IM_AVI)
           method+=",c0.0.15.255i2n1,1,0,1,0";
+      else if (special==IM_GIF)
+          method+=",14,7,8,0,0,128";
+      else if (special==IM_PNG)
+          method+=",14,7,6,0,0,128";
       else if (type<21)  // store if not compressible 20
         method+=",0";
       else {

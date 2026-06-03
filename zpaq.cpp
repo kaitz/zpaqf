@@ -2243,7 +2243,8 @@ enum FETypes {
     FE_GIF=8,
     FE_MP3=9,
     FE_SWF=10,
-    FE_LAST=11
+    FE_ALL=11,
+    FE_LAST=12
 };
 
 struct Extension {
@@ -2638,7 +2639,8 @@ int Jidac::add() {
               zpBMFILEHEADER &bmHdr=(zpBMFILEHEADER&)buf;
               zpBMOSFILEHEADER &bmHdr1=(zpBMOSFILEHEADER&)buf;
               if (bmHdr.bfType==0x4d42 && bmHdr.bfSize==infSize && blocksize>bmHdr.bfSize && bmHdr.bfSize>16 &&
-                  (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078|| bmHdr.bfOffBits==26|| bmHdr.bfOffBits==794 || bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved==0) {
+                  (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078 || bmHdr.bfOffBits==26 || bmHdr.bfOffBits==794 ||
+                   bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved==0) {
                   if (bmHdr.bfOffBits!=26 && bmHdr.biWidth<0xffff && bmHdr.biWidth>16  && bmHdr.biCompression==0 && bmHdr.biPlanes==1) {
                       if (bmHdr.biBitCount==24 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER) && bmHdr.biWidth>16) {
                           pfState=IM24_BMP;
@@ -2750,7 +2752,7 @@ int Jidac::add() {
                       last4=(last4<<8)+(uint8_t)buf[i];
                   }
                   if (isMP3) {
-                      pfState=IM_JPG; //mp3
+                      pfState=IM_MP3; //mp3
                       pfData=infSize;
                       imbWidth=1; // fake, to keep all files in same block
                   }
@@ -2772,9 +2774,10 @@ int Jidac::add() {
               }
           } else if (ext==FE_PNG && buflen>128) { //png
               if ((unsigned char)buf[0]==0x89 && (unsigned char)buf[1]==0x50 && (unsigned char)buf[2]==0x4e && (unsigned char)buf[3]==0x47) { 
-                  pfState=FL_CMP;
+                  pfState=IM_PNG;
                   pfData=infSize;
                   imbWidth=1;
+                  ext==FE_PNG;
               } else {
                   pfState=IM_NONE;
                   pfData=0;
@@ -2782,9 +2785,10 @@ int Jidac::add() {
               }
           }else if (ext==FE_GIF && buflen>32) { //gif
               if ((unsigned char)buf[0]==0x47 && (unsigned char)buf[1]==0x49 && (unsigned char)buf[2]==0x46 && (unsigned char)buf[3]==0x38) { 
-                  pfState=FL_CMP;
+                  pfState=IM_GIF;
                   pfData=infSize;
                   imbWidth=1;
+                  ext=FE_GIF;
               } else {
                   pfState=IM_NONE;
                   pfData=0;
