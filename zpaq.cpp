@@ -1150,6 +1150,7 @@ private:
   int all;                  // -all option
   bool force;               // -force option
   int fragment;             // -fragment option
+  bool afragment;           // -afragment option
   const char* index;        // index option
   char password_string[32]; // hash of -key argument
   const char* password;     // points to password_string or NULL
@@ -1291,6 +1292,7 @@ int Jidac::doCommand(int argc, const char** argv) {
   // Initialize options to default values
   command=0;
   force=false;
+  afragment=false;
   fragment=6;
   all=0;
   password=0;  // no password
@@ -1342,6 +1344,7 @@ int Jidac::doCommand(int argc, const char** argv) {
     }
     else if (opt=="-force" || opt=="-f") force=true;
     else if (opt=="-fragment" && i<argc-1) fragment=atoi(argv[++i]);
+    else if (opt=="-afragment" && i<argc-1) fragment=atoi(argv[++i]),afragment=true;
     else if (opt=="-index" && i<argc-1) index=argv[++i];
     else if (opt=="-key" && i<argc-1) {
       libzpaq::SHA256 sha256;
@@ -2237,24 +2240,34 @@ enum FETypes {
     FE_BMP=5,
     FE_RAW=6,
     FE_PM=7,
+    FE_GIF=8,
+    FE_MP3=9,
+    FE_SWF=10,
+    FE_LAST=11
 };
 
 struct Extension {
     const std::string e;
     const FETypes     t;
+    const int       mif; // new mid fragment size
+
 };
 
-static const size_t ExtCapacity=11;
+static const size_t ExtCapacity=14;
 
 static const Extension extension[ExtCapacity]={
-    {".jpg", FE_JPG},{".jpeg", FE_JPG},
-    {".png", FE_PNG},
-    {".jxl", FE_JXL},
-    {".mkv", FE_VID},{".avi", FE_VID},
-    {".bmp", FE_BMP},
-    {".raw", FE_RAW},
-    {".pgm", FE_PM},{".pbm", FE_PM},{".ppm", FE_PM},
-}; 
+    {".jpg", FE_JPG,11},{".jpeg", FE_JPG,11},
+    {".png", FE_PNG,11},
+    {".gif", FE_GIF,11},
+    {".jxl", FE_JXL,0},
+    {".mkv", FE_VID,0},
+    {".avi", FE_VID,0},
+    {".bmp", FE_BMP,0},
+    {".raw", FE_RAW,0},
+    {".pgm", FE_PM,0},{".pbm", FE_PM,0},{".ppm", FE_PM,0},
+    {".mp3", FE_MP3,11},
+    {".swf", FE_SWF,0}
+};
 
 // Add or delete files from archive. Return 1 if error else 0.
 int Jidac::add() {
@@ -2347,6 +2360,7 @@ int Jidac::add() {
 
   // Set block and fragment sizes
   if (fragment<0) fragment=0;
+  const int oldfragment=fragment;
   const int log_blocksize=20+atoi(method.c_str()+1);
   if (log_blocksize<20 || log_blocksize>31) error("blocksize must be 0..11");
   const unsigned blocksize=(1u<<log_blocksize)-4096;
@@ -2354,6 +2368,27 @@ int Jidac::add() {
       ? blocksize-12 : 8128u<<fragment;
   const unsigned MIN_FRAGMENT=fragment>25 || (64u<<fragment)>MAX_FRAGMENT
       ? MAX_FRAGMENT : 64u<<fragment;
+
+  unsigned MIN_FRAGMENT_NEW=MIN_FRAGMENT;
+  unsigned MAX_FRAGMENT_NEW=MAX_FRAGMENT;
+  struct MMFragment{
+      unsigned min;
+      unsigned max;
+      unsigned   f;
+  };
+  libzpaq::Array<MMFragment> ExtFrags(ExtCapacity);
+  // Use custom fragment sizes ranges for known file types, if user defined is larger then ignore
+  if (afragment) {
+    for (unsigned i=0; i<ExtCapacity; ++i) { 
+      if (afragment && extension[i].mif>0) {
+        const unsigned newfrag=fragment>extension[i].mif?fragment:extension[i].mif;
+        ExtFrags[i].f=newfrag;
+        ExtFrags[i].max=newfrag>19 || (8128u<<newfrag)>blocksize-12 ? blocksize-12 : 8128u<<newfrag;
+        ExtFrags[i].min=newfrag>25 || (64u<<newfrag)>ExtFrags[i].max ? ExtFrags[i].max : 64u<<newfrag;
+        if (ExtFrags[i].max>MAX_FRAGMENT_NEW) MAX_FRAGMENT_NEW=ExtFrags[i].max;
+      } else ExtFrags[i].min=MIN_FRAGMENT,ExtFrags[i].max=MAX_FRAGMENT,ExtFrags[i].f=fragment;
+    }
+  }
 
   // Don't mix streaming and journaling
   for (unsigned i=0; i<block.size(); ++i) {
@@ -2519,17 +2554,22 @@ int Jidac::add() {
   const int ON=4;      // number of order-1 tables to save
   const int level=isdigit(method[0])?(method[0]-'0'):-1;
   unsigned char o1prev[ON*256]={0};  // last ON order 1 predictions
-  libzpaq::Array<char> fragbuf(MAX_FRAGMENT);
+  libzpaq::Array<char> fragbuf(MAX_FRAGMENT_NEW);
   vector<unsigned> blocklist;  // list of starting fragments
   FETypes pext=FE_NONE,ext=FE_NONE;
   const int BUFSIZE=4096*16;  // input buffer 64k
   libzpaq::Array<char> buf(BUFSIZE);
+  afragment=level>2?afragment:false;
+
   // For each file to be added
   for (unsigned fi=0; fi<=vf.size(); ++fi) {
     FP in=FPNULL;
     int bufptr=0, buflen=0;  // read pointer and limit
     int64_t infSize = 0;
     pext=ext;
+    MIN_FRAGMENT_NEW=MIN_FRAGMENT;
+    MAX_FRAGMENT_NEW=MAX_FRAGMENT;
+    fragment=oldfragment;
     if (fi<vf.size()) {
       assert(vf[fi]->second.ptr.size()==0);
       DTMap::iterator p=vf[fi];
@@ -2548,20 +2588,26 @@ int Jidac::add() {
         ++errors;
         continue;
       }
-      infSize = p->second.size;
+      infSize=p->second.size;
       p->second.data=1;  // add
       std::string fext="";
       if (p->first.size()>4) {
-          fext=p->first.substr(p->first.size() - 4);
+          fext=p->first.substr(p->first.size()-4);
           std::transform(fext.begin(), fext.end(), fext.begin(),[](unsigned char c){ return std::tolower(c); });
       }
+      // Set new min frag len
       ext=FE_NONE;
-      if (fext.size()>3) { // assume ext lenght is at least 4 bytes, see extension
+      if (fext.size()>3) {
         for (unsigned i=0; i<ExtCapacity; ++i) { 
-           if (extension[i].e==fext) {
-               ext=extension[i].t;
-               break;
-           }
+          if (extension[i].e==fext) {
+            ext=extension[i].t;
+            if (afragment) {
+              MIN_FRAGMENT_NEW=ExtFrags[i].min;
+              MAX_FRAGMENT_NEW=ExtFrags[i].max;
+              fragment=ExtFrags[i].f;
+            }
+            break;
+          }
         }
       }
     }
@@ -2571,6 +2617,7 @@ int Jidac::add() {
     isIMAGE=pfState;
     info=imbWidth;
     pfState=IM_NONE,imbWidth=0;
+    
     for (unsigned fj=0; true; ++fj) {
       int64_t sz=0;  // fragment size;
       unsigned hits=0;  // correct prediction count
@@ -2683,26 +2730,74 @@ int Jidac::add() {
               else if (wi && hi && li==0 && pfState==IM1_PBM) imbWidth=(wi+7)/8,pfData=imbWidth*hi+i+1;
               else if (wi && hi && li==255 && pfState==IM24_PPM) imbWidth=wi*3,pfData=wi*3*hi+i+1;
               else pfState=IM_NONE;
-          } else if (ext==FE_JPG && buflen<=BUFSIZE && buflen>512) {
-              if ((unsigned char)buf[0]==0xFF && (unsigned char)buf[1]==0xD8 && (unsigned char)buf[2]==0xFF && (unsigned char)(buf[3]&0xf0)==0xE0) {
+          } else if ((ext==FE_JPG || ext==FE_MP3 && buflen>0x2000) /*&& buflen<=BUFSIZE*/ && buflen>128) {
+              if ((unsigned char)buf[0]==0xFF && (unsigned char)buf[1]==0xD8 && (unsigned char)buf[2]==0xFF && ((unsigned char)(buf[3]&0xf0)==0xE0) || (unsigned char)(buf[3]&0xf0)==0xD0 ) {
                   pfState=IM_JPG;
                   pfData=infSize;
                   imbWidth=1; // fake, to keep all jpeg files in same block
+              } else if (ext==FE_MP3 && buflen>0x2000) {
+                  const uint32_t mpSignature=0xFFF80000;
+                  uint32_t last4=((uint8_t)buf[0]<<24)+((uint8_t)buf[1]<<16)+((uint8_t)buf[2]<<8)+(uint8_t)buf[3];
+                  bool isMP3=(last4==0x49443303); // ID3\3
+                  pfState=IM_NONE;
+                  pfData=0;
+                  imbWidth=0;
+                  for (int i=4; i<0x2000; ++i) {
+                      if ((last4&mpSignature)==mpSignature) { // Test for sync frame
+                          isMP3=true;
+                          break;
+                      }
+                      last4=(last4<<8)+(uint8_t)buf[i];
+                  }
+                  if (isMP3) {
+                      pfState=IM_JPG; //mp3
+                      pfData=infSize;
+                      imbWidth=1; // fake, to keep all files in same block
+                  }
               } else {
                   pfState=IM_NONE;
                   pfData=0;
                   imbWidth=0;
               }
-          } else if (ext==FE_VID && buflen<=BUFSIZE && buflen>512) { //avi mov jpeg mp4 mkv?
+          } else if (ext==FE_VID && buflen>512) { //avi mov jpeg mp4 mkv?
               if ((unsigned char)buf[0]==0x52 && (unsigned char)buf[1]==0x49 && (unsigned char)buf[2]==0x46 && (unsigned char)buf[3]==0x46 && //RIFF
                    (unsigned char)buf[112]==0x6d && (unsigned char)buf[113]==0x6a && (unsigned char)buf[114]==0x70 && (unsigned char)buf[115]==0x67  ) { //mjpg
                   pfState=IM_AVI;
                   pfData=infSize;
-                  imbWidth=1; // fake, to keep all jpeg files in same block
+                  imbWidth=1;
               } else {
                   pfState=IM_NONE;
                   pfData=0;
                   imbWidth=0;
+              }
+          } else if (ext==FE_PNG && buflen>128) { //png
+              if ((unsigned char)buf[0]==0x89 && (unsigned char)buf[1]==0x50 && (unsigned char)buf[2]==0x4e && (unsigned char)buf[3]==0x47) { 
+                  pfState=FL_CMP;
+                  pfData=infSize;
+                  imbWidth=1;
+              } else {
+                  pfState=IM_NONE;
+                  pfData=0;
+                  imbWidth=0;
+              }
+          }else if (ext==FE_GIF && buflen>32) { //gif
+              if ((unsigned char)buf[0]==0x47 && (unsigned char)buf[1]==0x49 && (unsigned char)buf[2]==0x46 && (unsigned char)buf[3]==0x38) { 
+                  pfState=FL_CMP;
+                  pfData=infSize;
+                  imbWidth=1;
+              } else {
+                  pfState=IM_NONE;
+                  pfData=0;
+                  imbWidth=0;
+              }
+          }
+          // Reset to default if bad extension/content
+          if (pfState==IM_NONE) {
+              ext=FE_NONE;
+              if (afragment) {
+                MIN_FRAGMENT_NEW=MIN_FRAGMENT;
+                MAX_FRAGMENT_NEW=MAX_FRAGMENT;
+                fragment=oldfragment;
               }
           }
               // Force new type if present
@@ -2720,11 +2815,11 @@ int Jidac::add() {
             fragbuf[sz++]=c;
           }
           if (c==EOF
-              || sz>=MAX_FRAGMENT
-              || (fragment<=22 && h<(1u<<(22-fragment)) && sz>=MIN_FRAGMENT))
+              || sz>=MAX_FRAGMENT_NEW
+              || (fragment<=22 && h<(1u<<(22-fragment)) && sz>=MIN_FRAGMENT_NEW))
             break;
         }
-        assert(sz<=MAX_FRAGMENT);
+        assert(sz<=MAX_FRAGMENT_NEW);
         total_done+=sz;
         // 
         sha1.write(&fragbuf[0], sz);
@@ -2807,9 +2902,12 @@ int Jidac::add() {
             else if (pfData && sb.size()>0 && (imbWidth!=info || (imbWidth/3)>1024)) newblock=true; // insert first BMP fragment
             else if (level>2) {
                 if (ext!=FE_JPG && pext==FE_JPG) newblock=true;
+                else if ((ext!=FE_MP3 && pext==FE_MP3) || (pext!=FE_MP3 && ext==FE_MP3)) newblock=true;
                 else if (ext!=FE_VID && pext==FE_VID) newblock=true;
                 else if ((ext!=FE_RAW && pext==FE_RAW) || (pext!=FE_RAW && ext==FE_RAW)) newblock=true; // after and before
                 else if ((ext!=FE_JXL && pext==FE_JXL) || (pext!=FE_JXL && ext==FE_JXL)) newblock=true; // after and before
+                else if ((ext!=FE_PNG && pext==FE_PNG) || (pext!=FE_PNG && ext==FE_PNG)) newblock=true; // after and before
+                else if ((ext!=FE_GIF && pext==FE_GIF) || (pext!=FE_GIF && ext==FE_GIF)) newblock=true; 
             }
         }
         if (frags<1) newblock=false;  // block is empty?
@@ -2849,7 +2947,7 @@ int Jidac::add() {
         redundancy+=hits;
         exe+=exe1*(3+(fragment>=6));
         text+=text1*2;
-        if (sz>=MIN_FRAGMENT) {
+        if (sz>=MIN_FRAGMENT_NEW) {
           memmove(o1prev, o1prev+256, 256*(ON-1));
           memcpy(o1prev+256*(ON-1), o1, 256);
         }
