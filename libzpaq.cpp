@@ -7075,7 +7075,8 @@ void WBPE::build() {
   int n1[256]={0};  // char count
   
   // Pass 1, building dictionary...
-  while (inpos<n, c=in[inpos++]) {
+  while (inpos<n) {
+    c=in[inpos++];
     ++n1[c];
     if (len==0)
       s[len++]=c;
@@ -7208,9 +7209,9 @@ void WBPE::build() {
 
 // Encode from in to buf until end of input or buf is not empty
 void WBPE::fill() {
-  while ((wpos+2)<BUFSIZE && inpos<n) {
+  while ((wpos+2)<BUFSIZE  && (inpos<=n || slen)) {
     // fill input buffer ins
-    while (slen<LEN)
+    while (slen<LEN && inpos<n)
       ins[slen++]=in[inpos++];
     if (slen<1)
       break;
@@ -9498,6 +9499,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
                 method+=",14,7,8,0,0,128";
         else
             method+=",14,7,4,0,2,128";
+            //printf("%s\n",method.c_str());
       }
     }
 
@@ -9514,22 +9516,22 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
                 unsigned int t2[0x10000]={0};
                 int m[256]={0};
                 int m2[0x10000]={0};
-                int c;
+                unsigned char c;
                 unsigned char b2=0,b3=0;
                 unsigned int len=0;
                 const unsigned char* p=in->data();
                 for (unsigned i=0; i<n; ++i) {
                     c=p[i];
-                    t[b2]=(t[b2]<<8)|(unsigned char)c;
-                    unsigned int r=(t[c]>>8)&255;
+                    t[b2]=(t[b2]<<8)|c;
+                    unsigned char r=(t[c]>>8)&255;
             
-                    t2[(b3<<8)+ b2]=(t2[(b3<<8)+b2]<<8)|(unsigned char)c;
+                    t2[(b3<<8)+ b2]=(t2[(b3<<8)+b2]<<8)|c;
                     unsigned int s=(t2[(b2<<8)+c]>>8)&0xffff;
             
                     if (c==r) m[c]++;
-                    if (((b2<<8)+c)==s) m2[(b2<<8)+c]++;
+                    if (unsigned((b2<<8)+c)==s) m2[(b2<<8)+c]++;
                     b3=b2;
-                    b2=(unsigned char)c;
+                    b2=c;
                 }
                 int avg=0,count=0;
                 for(auto j=0; j<256; j++) {

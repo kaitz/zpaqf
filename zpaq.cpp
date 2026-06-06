@@ -214,7 +214,7 @@ public:
     assert(sem>=0);
     pthread_mutex_lock(&mutex);
     int r=0;
-    if (sem==0) r=pthread_cond_wait(&cv, &mutex);
+    while (sem==0) r=pthread_cond_wait(&cv, &mutex);
     assert(sem>0);
     --sem;
     pthread_mutex_unlock(&mutex);
@@ -2231,6 +2231,25 @@ struct WriterPair: public libzpaq::Writer {
   WriterPair(): a(0), b(0) {}
 };
 
+
+struct TAR_header{
+    char name[100+8+8+8];
+    //char mode[8];
+    //char uid[8];
+    //char gid[8];
+    char size[12];
+    //char mtime[12];
+    //char chksum[8];
+    //char linkflag;
+    //char linkname[100];
+    //char magic[8];
+    //char uname[32];
+    //char gname[32];
+    //char major[8];
+    //char minor[8];
+    char pad[167+12+8+1+100+8+32+32+8+8];
+};
+
 enum FETypes {
     FE_NONE=0,
     FE_JPG=1,
@@ -2243,18 +2262,18 @@ enum FETypes {
     FE_GIF=8,
     FE_MP3=9,
     FE_SWF=10,
-    FE_ALL=11,
-    FE_LAST=12
+    FE_TAR=11,
+    FE_ALL=12,
+    FE_LAST=13
 };
 
 struct Extension {
     const std::string e;
     const FETypes     t;
     const int       mif; // new mid fragment size
-
 };
 
-static const size_t ExtCapacity=14;
+static const size_t ExtCapacity=15;
 
 static const Extension extension[ExtCapacity]={
     {".jpg", FE_JPG,11},{".jpeg", FE_JPG,11},
@@ -2267,8 +2286,369 @@ static const Extension extension[ExtCapacity]={
     {".raw", FE_RAW,0},
     {".pgm", FE_PM,0},{".pbm", FE_PM,0},{".ppm", FE_PM,0},
     {".mp3", FE_MP3,11},
-    {".swf", FE_SWF,0}
+    {".swf", FE_SWF,0},
+    {".tar", FE_TAR,0}
 };
+
+struct MMFragment{
+      unsigned min;
+      unsigned max;
+      unsigned   f;
+};
+//Adaptive content detection
+class ACD {
+public:
+  ACD(int l, int f, bool af, unsigned mif, unsigned maf, const unsigned blocksize, const int BUFSIZE);
+  inline void NextFile() { pext=ext;}
+  inline bool TFFragment(int64_t z) {return ext==FE_TAR && z==tarFragment;} // transparent file fragment (tar, ...)
+  void TFNext(int64_t z);
+  bool SetExtension(const std::string e);
+  void NextFileStart();
+  void Parse(const int frags, const char *buf, const int bufptr, const int buflen, const int64_t infSize);
+  inline unsigned MinFrag() {return minFragment;}
+  inline unsigned MaxFrag() {return maxFragment;}
+  inline unsigned Frag() {return f;}
+  bool IsNewBlock(bool nb, int64_t fsize, bool sb);
+  void Eof(int64_t fsize);
+  inline int Info() { return info;}
+  inline int PFData() { return pfData;}
+  inline int IInfo() { return isIMAGE;}
+private:
+  int64_t TAR_GetOctal(const char *p, int n);
+  int64_t TAR_Checksum(char *p);
+  bool TAR_End(const char *p);
+  int level;
+  int f,of;
+  bool af;
+  libzpaq::Array<MMFragment> ExtFrags;
+  unsigned maxFragment,minFragment;
+  const unsigned dmaxFragment,dminFragment;
+  FETypes pext,ext;
+  int64_t tarFragment,tarFragmentNext,tarFragmentPad;
+  SpecialType pfState,isIMAGE;
+  int info;
+  int pfData,imbWidth;
+  bool fileStart;
+  int64_t file_done;
+  const int BUFSIZE;
+  const unsigned blocksize;
+};
+ACD::ACD(int l, int f, bool af, unsigned mif, unsigned maf, const unsigned blocksize, const int BUFSIZE):level(l),f(f),of(f),af(af),ExtFrags(ExtCapacity),
+  maxFragment(maf),minFragment(mif),dmaxFragment(maf),dminFragment(mif),pext(FE_NONE),ext(FE_NONE),
+  tarFragment(0),tarFragmentNext(0),tarFragmentPad(0),
+  pfState(IM_NONE),isIMAGE(IM_NONE),info(0),pfData(0),imbWidth(0),fileStart(false),
+  file_done(0),BUFSIZE(BUFSIZE),blocksize(blocksize) {
+  // Use custom fragment sizes ranges for known file types, if defined is larger then extend
+    for (unsigned i=0; i<ExtCapacity; ++i) { 
+      if (af && extension[i].mif>0) {
+        const unsigned newfrag=f>extension[i].mif?extension[i].mif+(f-extension[i].mif):extension[i].mif;
+        ExtFrags[i].f=newfrag;
+        ExtFrags[i].max=newfrag>19 || (8128u<<newfrag)>blocksize-12 ? blocksize-12 : 8128u<<newfrag;
+        ExtFrags[i].min=newfrag>25 || (64u<<newfrag)>ExtFrags[i].max ? ExtFrags[i].max : 64u<<newfrag;
+        if (ExtFrags[i].max>maxFragment) maxFragment=ExtFrags[i].max;
+      } else {
+        ExtFrags[i].min=mif;
+        ExtFrags[i].max=maf;
+        ExtFrags[i].f=f;
+      }
+      assert(ExtFrags[i].f>=0);
+      assert(ExtFrags[i].max>0);
+      assert(ExtFrags[i].min>0);
+    }
+}
+inline void ACD::Eof(int64_t fsize) {
+    if (pfState && fsize != pfData && fsize!=0 ) pfState=IM_NONE;
+}
+inline void ACD::TFNext(int64_t z) {
+    if (tarFragment) {
+        tarFragment-=z;
+        if (tarFragment==0) tarFragment=tarFragmentNext,tarFragmentNext=tarFragmentPad,tarFragmentPad=0;
+    }
+    file_done+=z;
+}
+void ACD::NextFileStart() {
+    isIMAGE=pfState;
+    info=imbWidth;
+    pfState=IM_NONE,imbWidth=0;
+    fileStart=false;
+    file_done=0;
+}
+bool ACD::SetExtension(const std::string e) {
+    ext=FE_NONE;
+    for (unsigned i=0; i<ExtCapacity; ++i) {
+      if (extension[i].e==e) {
+        ext=extension[i].t;
+        if (af) {
+          minFragment=ExtFrags[i].min;
+          maxFragment=ExtFrags[i].max;
+          f=ExtFrags[i].f;
+          return true;
+        }
+        return false;
+      }
+    }
+    return false;
+}
+inline bool ACD::IsNewBlock(bool nb, int64_t fsize, bool sb){
+    bool newblock=nb;
+    if (fsize==0) {
+            if (isIMAGE && (imbWidth!=info || (imbWidth/3)>1024)) newblock=true; // file was image
+            else if (pfData && sb && (imbWidth!=info || (imbWidth/3)>1024)) newblock=true; // start new block
+            else if (level>2) {
+                if ((ext!=FE_JPG && pext==FE_JPG) || (pext!=FE_JPG && ext==FE_JPG)) newblock=true;
+                else if ((ext!=FE_MP3 && pext==FE_MP3) || (pext!=FE_MP3 && ext==FE_MP3)) newblock=true;
+                else if ((ext!=FE_VID && pext==FE_VID) || (pext!=FE_VID && ext==FE_VID)) newblock=true;
+                else if ((ext!=FE_RAW && pext==FE_RAW) || (pext!=FE_RAW && ext==FE_RAW)) newblock=true;
+                else if ((ext!=FE_JXL && pext==FE_JXL) || (pext!=FE_JXL && ext==FE_JXL)) newblock=true;
+                else if ((ext!=FE_PNG && pext==FE_PNG) || (pext!=FE_PNG && ext==FE_PNG)) newblock=true;
+                else if ((ext!=FE_GIF && pext==FE_GIF) || (pext!=FE_GIF && ext==FE_GIF)) newblock=true;
+                //if ((ext!=FE_NONE ||  pext!=FE_NONE) && ext!=pext) newblock=true;
+            }
+        }
+    return newblock;
+}
+int64_t ACD::TAR_GetOctal(const char *p, int n) {
+    int64_t i=0;
+    while (*p<'0' || *p>'7') ++p, --n;
+    while (*p>='0' && *p<='7' && n>0) {
+        i*=8;
+        i+=*p-'0';
+        ++p,--n;
+    }
+    return i;
+}
+
+int64_t ACD::TAR_Checksum(char *p) {
+    int64_t u=0;
+    for (int n=0; n<512; ++n) {
+        if (n<148 || n>155) u+=((unsigned char *)p)[n];
+        else u+=0x20;
+    }
+    return (u==TAR_GetOctal(p+148,8));
+}
+
+inline bool ACD::TAR_End(const char *p) {
+    return p[0] == 0 && !memcmp(p, p + 1, 512 - 1);
+}
+
+void ACD::Parse(const int frags, const char *buf, const int bufptr, const int buflen, const int64_t infSize) {
+    if ((ext==FE_TAR /*|| fileStart==false && ext==FE_NONE*/) && buflen>1024 && tarFragment==0) {
+        fileStart=true;
+        TAR_header &tarHdr=(TAR_header&)buf[bufptr];
+        bool badTAR=false;
+        if ((bufptr+511)>=buflen) badTAR=true;
+        else if (TAR_End((char*)&tarHdr))  badTAR=true;
+        else if (!TAR_Checksum((char*)&tarHdr))  badTAR=true;
+        else {
+            int64_t tfsize=TAR_GetOctal(tarHdr.size,12);
+            int64_t tfp=0;
+            int64_t pad=tfsize-((tfsize>>9)<<9);
+            if (pad) tfp=512+((tfsize>>9)<<9);
+            else if (tfsize==0) tfp=512;
+            else tfp=tfsize;
+            
+            tarFragment=512, tarFragmentNext=tfsize;
+            tarFragmentPad=tfp-tfsize;
+            if ((file_done+tfp)>(infSize-512)) badTAR=true;
+        }
+        if (badTAR) ext=FE_NONE,tarFragment=tarFragmentNext=tarFragmentPad=0;
+    }
+    else if (level>2 && ext!=FE_NONE && fileStart==false && pfState==IM_NONE) {
+        fileStart=true;
+        if (ext==FE_BMP && buflen==BUFSIZE) {
+            zpBMFILEHEADER bmHdr{0};
+            memcpy(&bmHdr, &buf[0], sizeof(zpBMFILEHEADER));
+            if (bmHdr.bfType==0x4d42 && bmHdr.bfSize==infSize && blocksize>bmHdr.bfSize && bmHdr.bfSize>16 &&
+                    (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078 || bmHdr.bfOffBits==26 || bmHdr.bfOffBits==794 ||
+                        bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved==0) {
+                if (bmHdr.bfOffBits!=26 && bmHdr.biWidth<0xffff && bmHdr.biWidth>16  && bmHdr.biCompression==0 && bmHdr.biPlanes==1) {
+                    if (bmHdr.biBitCount==24 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER) && bmHdr.biWidth>16) {
+                        pfState=IM24_BMP;
+                        pfData=bmHdr.bfSize;
+                        imbWidth=((bmHdr.biWidth*3)+3)&-4;
+                    } else if (bmHdr.biBitCount==8 && bmHdr.bfOffBits==1078) {
+                        pfState=IM8_BMP;
+                        pfData=bmHdr.bfSize;
+                        imbWidth=(bmHdr.biWidth+3)&-4;
+                    } else if (bmHdr.biBitCount==1 && bmHdr.bfOffBits==62) {
+                        pfState=IM1_BMP;
+                        pfData=bmHdr.bfSize;
+                        imbWidth=(((bmHdr.biWidth-1)>>5)+1)*4;
+                    } else if (bmHdr.biBitCount==4 && bmHdr.bfOffBits==118) {
+                        pfState=IM4_BMP;
+                        pfData=bmHdr.bfSize;
+                        imbWidth=((bmHdr.biWidth*4+31)>>5)*4;
+                    } else if (bmHdr.biBitCount==32 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER)&& bmHdr.biWidth>16) {
+                        pfState=IM32_BMP;
+                        pfData=bmHdr.bfSize;
+                        imbWidth=bmHdr.biWidth*4;
+                    }
+                } else {
+                    // OS/2
+                    zpBMOSFILEHEADER bmHdr1{0};
+                    memcpy(&bmHdr, &buf[0], sizeof(zpBMOSFILEHEADER));
+                    if (bmHdr.bfOffBits==26 && bmHdr1.biBitCount==24 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>16 && bmHdr1.biPlanes==1) {
+                        pfState=IM24_BMP;
+                        pfData=bmHdr1.bfSize;
+                        imbWidth=bmHdr1.biWidth*3;
+                    } else if (bmHdr.bfOffBits==794 && bmHdr1.biBitCount==8 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>16 && bmHdr1.biPlanes==1) {
+                        pfState=IM8_BMP;
+                        pfData=bmHdr1.bfSize;
+                        imbWidth=bmHdr1.biWidth;
+                    }
+                }
+            }
+            if (pfState==IM_NONE) ext=FE_NONE;
+        }
+        // multiline pgm pbm ppm
+        else if (ext==FE_PM && buflen==BUFSIZE) {
+            const std::string hdr=std::string(&buf[0], 3);
+            if (hdr=="P5\n") pfState=IM8_PGM;
+            else if (hdr=="P6\n") pfState=IM24_PPM;
+            else if (hdr=="P4\n") pfState=IM1_PBM;
+
+            int wi=0,hi=0,li=0,i=3;
+            int comment=0;
+            // width height
+            while ((wi==0 || hi==0) && pfState) {
+                // comment?
+                if (buf[i]=='#') {
+                    while (buf[i]!='\n' && i<(255+3)) {
+                        ++i; ++comment;
+                    }
+                    if (buf[i]!='\n') { // fail on long comment
+                        break;
+                    }
+                    ++i; ++comment;
+                }
+                // width
+                if (!(buf[i]>='0' && buf[i]<='9')) break;
+                while (buf[i]>='0' && buf[i]<='9') {
+                    wi=wi* 10+buf[i]- '0';
+                    ++i;
+                    if (i>(3+comment+5)) break;
+                }
+                // height
+                if (buf[i]==' ') {
+                    ++i;
+                    if (!(buf[i]>='0' && buf[i]<='9')) break;
+                    while (buf[i]>='0' && buf[i]<='9') {
+                        hi=hi*10+buf[i]-'0';
+                        ++i;
+                        if (i>(3+comment+5+5)) break;
+                    }
+                }
+                // max val
+                if (buf[i]=='\n' && pfState!=IM1_PBM){
+                    ++i;
+                    if (!(buf[i]>='0' && buf[i]<='9')) break;
+                    while (buf[i]>='0' && buf[i]<='9') {
+                        li=li*10+buf[i]-'0';
+                        ++i;
+                        if (i>(3+comment+5+5+4)) break;
+                    }
+                }
+                if (i>(3+comment+5+5+4)) {
+                    pfState=IM_NONE;
+                    break;
+                }
+            }
+            if (wi && hi && li>=0 && li<=255 && pfState==IM8_PGM) imbWidth=wi,pfData=wi*hi+i+1;
+            else if (wi && hi && li==0 && pfState==IM1_PBM) imbWidth=(wi+7)/8,pfData=imbWidth*hi+i+1;
+            else if (wi && hi && li==255 && pfState==IM24_PPM) imbWidth=wi*3,pfData=wi*3*hi+i+1;
+            else pfState=IM_NONE,ext=FE_NONE;
+        } else if ((ext==FE_JPG || (ext==FE_MP3 && buflen>0x2000)) && buflen>128) {
+            if ((uint8_t)buf[0]==0xFF && (uint8_t)buf[1]==0xD8 && (uint8_t)buf[2]==0xFF && ((uint8_t)(buf[3]&0xf0)==0xE0 || (uint8_t)(buf[3]&0xf0)==0xD0) ) {
+                const uint32_t mpSignature=0xFFC2;
+                uint16_t last2=((uint8_t)buf[2]<<8)+(uint8_t)buf[3];
+                bool isJP=(last2==0xFFC2); // 
+                for (int i=2; i<0x1000; ++i) {
+                    if (last2==mpSignature) { // Test progressive
+                        minFragment=dminFragment;
+                        maxFragment=dmaxFragment;
+                        f=of;
+                        break;
+                    }
+                    last2=(last2<<8)+(uint8_t)buf[i];
+                }
+                pfState=IM_JPG; //mp3
+                pfData=infSize;
+                imbWidth=1; // fake, to keep all jpeg files in same block
+                ext=FE_JPG;
+            } else if (ext==FE_MP3 && buflen>0x2000) {
+                const uint32_t mpSignature=0xFFF80000;
+                uint32_t last4=((uint8_t)buf[0]<<24)+((uint8_t)buf[1]<<16)+((uint8_t)buf[2]<<8)+(uint8_t)buf[3];
+                bool isMP3=(last4==0x49443303); // ID3\3
+                pfState=IM_NONE;
+                pfData=0;
+                imbWidth=0;
+                for (int i=4; i<0x2000; ++i) {
+                    if ((last4&mpSignature)==mpSignature) { // Test for sync frame
+                        isMP3=true;
+                        break;
+                    }
+                    last4=(last4<<8)+(uint8_t)buf[i];
+                }
+                if (isMP3) {
+                    pfState=IM_MP3; //mp3
+                    pfData=infSize;
+                    imbWidth=1;
+                }
+            } else {
+                pfState=IM_NONE;
+                pfData=0;
+                imbWidth=0;
+                ext=FE_NONE;
+            }
+        } else if (ext==FE_VID && (bufptr+116)<(buflen) && buflen>512) { //avi mov jpeg mp4 mkv?
+            if ((uint8_t)buf[0]==0x52 && (uint8_t)buf[1]==0x49 && (uint8_t)buf[2]==0x46 && (uint8_t)buf[3]==0x46 && //RIFF
+                    (uint8_t)buf[112]==0x6d && (uint8_t)buf[113]==0x6a && (uint8_t)buf[114]==0x70 && (uint8_t)buf[115]==0x67  ) { //mjpg
+                pfState=IM_AVI;
+                pfData=infSize;
+                imbWidth=1;
+            } else {
+                pfState=IM_NONE;
+                pfData=0;
+                imbWidth=0;
+                ext=FE_NONE;
+            }
+        } else if (ext==FE_PNG && buflen>128) { //png
+            //if ((uint8_t)buf[0]==0x89 && (uint8_t)buf[1]==0x50 && (uint8_t)buf[2]==0x4e && (uint8_t)buf[3]==0x47) { 
+            pfState=IM_PNG;
+            pfData=infSize;
+            imbWidth=1;
+            /*} else {
+                pfState=IM_NONE;
+                pfData=0;
+                imbWidth=0;
+                ext=FE_NONE;
+            }*/
+        }else if (ext==FE_GIF && buflen>32) { //gif
+            //if ((uint8_t)buf[0]==0x47 && (uint8_t)buf[1]==0x49 && (uint8_t)buf[2]==0x46 && (uint8_t)buf[3]==0x38) { 
+            pfState=IM_GIF;
+            pfData=infSize;
+            imbWidth=1;
+            /* }else {
+                pfState=IM_NONE;
+                pfData=0;
+                imbWidth=0;
+                ext=FE_NONE;
+            }*/
+        }
+        // Reset to default fragment if bad extension/content
+        if (pfState==IM_NONE && ext==FE_NONE) {
+            ext=FE_NONE;
+            if (af) {
+                minFragment=dminFragment;
+                maxFragment=dmaxFragment;
+                f=of;
+            }
+        }
+        // Force new type if present
+        if (frags<1 && pfState!=IM_NONE) info=imbWidth, isIMAGE=pfState;
+    }   
+}
+
 
 // Add or delete files from archive. Return 1 if error else 0.
 int Jidac::add() {
@@ -2372,24 +2752,6 @@ int Jidac::add() {
 
   unsigned MIN_FRAGMENT_NEW=MIN_FRAGMENT;
   unsigned MAX_FRAGMENT_NEW=MAX_FRAGMENT;
-  struct MMFragment{
-      unsigned min;
-      unsigned max;
-      unsigned   f;
-  };
-  libzpaq::Array<MMFragment> ExtFrags(ExtCapacity);
-  // Use custom fragment sizes ranges for known file types, if user defined is larger then ignore
-  if (afragment) {
-    for (unsigned i=0; i<ExtCapacity; ++i) { 
-      if (afragment && extension[i].mif>0) {
-        const unsigned newfrag=fragment>extension[i].mif?fragment:extension[i].mif;
-        ExtFrags[i].f=newfrag;
-        ExtFrags[i].max=newfrag>19 || (8128u<<newfrag)>blocksize-12 ? blocksize-12 : 8128u<<newfrag;
-        ExtFrags[i].min=newfrag>25 || (64u<<newfrag)>ExtFrags[i].max ? ExtFrags[i].max : 64u<<newfrag;
-        if (ExtFrags[i].max>MAX_FRAGMENT_NEW) MAX_FRAGMENT_NEW=ExtFrags[i].max;
-      } else ExtFrags[i].min=MIN_FRAGMENT,ExtFrags[i].max=MAX_FRAGMENT,ExtFrags[i].f=fragment;
-    }
-  }
 
   // Don't mix streaming and journaling
   for (unsigned i=0; i<block.size(); ++i) {
@@ -2541,9 +2903,6 @@ int Jidac::add() {
   // reserve space for the header block
   writeJidacHeader(&out, date, -1, htsize);
   const int64_t header_end=out.tell();
-  int pfData=0,imbWidth=0;
-  SpecialType pfState=IM_NONE,isIMAGE=IM_NONE;
-  int info=0;
   // Compress until end of last file
   assert(method!="");
   StringBuffer sb(blocksize+4096-128);  // block to compress
@@ -2555,19 +2914,19 @@ int Jidac::add() {
   const int ON=4;      // number of order-1 tables to save
   const int level=isdigit(method[0])?(method[0]-'0'):-1;
   unsigned char o1prev[ON*256]={0};  // last ON order 1 predictions
-  libzpaq::Array<char> fragbuf(MAX_FRAGMENT_NEW);
-  vector<unsigned> blocklist;  // list of starting fragments
-  FETypes pext=FE_NONE,ext=FE_NONE;
   const int BUFSIZE=4096*16;  // input buffer 64k
+  ACD acd(level, fragment, level>2?afragment:false, MIN_FRAGMENT, MAX_FRAGMENT, blocksize, BUFSIZE);
+  libzpaq::Array<char> fragbuf(acd.MaxFrag());
+  vector<unsigned> blocklist;  // list of starting fragments
+  
   libzpaq::Array<char> buf(BUFSIZE);
-  afragment=level>2?afragment:false;
 
   // For each file to be added
   for (unsigned fi=0; fi<=vf.size(); ++fi) {
     FP in=FPNULL;
     int bufptr=0, buflen=0;  // read pointer and limit
-    int64_t infSize = 0;
-    pext=ext;
+    int64_t infSize=0;
+    acd.NextFile();
     MIN_FRAGMENT_NEW=MIN_FRAGMENT;
     MAX_FRAGMENT_NEW=MAX_FRAGMENT;
     fragment=oldfragment;
@@ -2591,34 +2950,20 @@ int Jidac::add() {
       }
       infSize=p->second.size;
       p->second.data=1;  // add
-      std::string fext="";
       if (p->first.size()>4) {
-          fext=p->first.substr(p->first.size()-4);
+          std::string fext=p->first.substr(p->first.size()-4);
           std::transform(fext.begin(), fext.end(), fext.begin(),[](unsigned char c){ return std::tolower(c); });
-      }
-      // Set new min frag len
-      ext=FE_NONE;
-      if (fext.size()>3) {
-        for (unsigned i=0; i<ExtCapacity; ++i) { 
-          if (extension[i].e==fext) {
-            ext=extension[i].t;
-            if (afragment) {
-              MIN_FRAGMENT_NEW=ExtFrags[i].min;
-              MAX_FRAGMENT_NEW=ExtFrags[i].max;
-              fragment=ExtFrags[i].f;
-            }
-            break;
-          }
-        }
+          if (acd.SetExtension(fext)) {
+              MIN_FRAGMENT_NEW=acd.MinFrag();
+              MAX_FRAGMENT_NEW=acd.MaxFrag();
+              fragment=acd.Frag();
+          }   
       }
     }
 
     // Read fragments
     int64_t fsize=0;  // file size after dedupe
-    isIMAGE=pfState;
-    info=imbWidth;
-    pfState=IM_NONE,imbWidth=0;
-    
+    acd.NextFileStart();
     for (unsigned fj=0; true; ++fj) {
       int64_t sz=0;  // fragment size;
       unsigned hits=0;  // correct prediction count
@@ -2633,181 +2978,8 @@ int Jidac::add() {
         assert(in!=FPNULL);
         while (true) {
           if (bufptr>=buflen) bufptr=0, buflen=fread(&buf[0], 1, BUFSIZE, in);
-          // detect BMP 1,4,8,24 bit at level 3 and up
-          if (level>2 && fsize==0 && bufptr==0 && pfState==IM_NONE) {
-           if (ext==FE_BMP && buflen==BUFSIZE) {
-              zpBMFILEHEADER &bmHdr=(zpBMFILEHEADER&)buf;
-              zpBMOSFILEHEADER &bmHdr1=(zpBMOSFILEHEADER&)buf;
-              if (bmHdr.bfType==0x4d42 && bmHdr.bfSize==infSize && blocksize>bmHdr.bfSize && bmHdr.bfSize>16 &&
-                  (bmHdr.bfOffBits==54 || bmHdr.bfOffBits==1078 || bmHdr.bfOffBits==26 || bmHdr.bfOffBits==794 ||
-                   bmHdr.bfOffBits==62 || bmHdr.bfOffBits==118) && bmHdr.bfReserved==0) {
-                  if (bmHdr.bfOffBits!=26 && bmHdr.biWidth<0xffff && bmHdr.biWidth>16  && bmHdr.biCompression==0 && bmHdr.biPlanes==1) {
-                      if (bmHdr.biBitCount==24 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER) && bmHdr.biWidth>16) {
-                          pfState=IM24_BMP;
-                          pfData=bmHdr.bfSize;
-                          imbWidth=((bmHdr.biWidth*3)+3)&-4;
-                      } else if (bmHdr.biBitCount==8 && bmHdr.bfOffBits==1078) {
-                          pfState=IM8_BMP;
-                          pfData=bmHdr.bfSize;
-                          imbWidth=(bmHdr.biWidth+3)&-4;
-                      } else if (bmHdr.biBitCount==1 && bmHdr.bfOffBits==62) {
-                          pfState=IM1_BMP;
-                          pfData=bmHdr.bfSize;
-                          imbWidth=(((bmHdr.biWidth-1)>>5)+1)*4;
-                      } else if (bmHdr.biBitCount==4 && bmHdr.bfOffBits==118) {
-                          pfState=IM4_BMP;
-                          pfData=bmHdr.bfSize;
-                          imbWidth=((bmHdr.biWidth*4+31)>>5)*4;
-                      } else if (bmHdr.biBitCount==32 && bmHdr.bfOffBits==sizeof(zpBMFILEHEADER)&& bmHdr.biWidth>16) {
-                          pfState=IM32_BMP;
-                          pfData=bmHdr.bfSize;
-                          imbWidth=bmHdr.biWidth*4;
-                      }
-                  // OS/2
-                  } else if (bmHdr.bfOffBits==26 && bmHdr1.biBitCount==24 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>16 && bmHdr1.biPlanes==1) {
-                      pfState=IM24_BMP;
-                      pfData=bmHdr1.bfSize;
-                      imbWidth=bmHdr1.biWidth*3;
-                  } else if (bmHdr.bfOffBits==794 && bmHdr1.biBitCount==8 &&bmHdr1.biWidth<0xffff && bmHdr1.biWidth>16 && bmHdr1.biPlanes==1) {
-                      pfState=IM8_BMP;
-                      pfData=bmHdr1.bfSize;
-                      imbWidth=bmHdr1.biWidth;
-                  }
-              }
-          }
-          // multiline pgm pbm ppm
-          else if (ext==FE_PM && buflen==BUFSIZE) {
-              std::string hdr=std::string(&buf[0], 3);
-              if (hdr=="P5\n") pfState=IM8_PGM;
-              else if (hdr=="P6\n") pfState=IM24_PPM;
-              else if (hdr=="P4\n") pfState=IM1_PBM;
-
-              int wi=0,hi=0,li=0,i=3;
-              int comment=0;
-              // width height
-              while ((wi==0 || hi==0) && pfState) {
-                  // comment?
-                  if (buf[i]=='#') {
-                     while (buf[i]!='\n' && i<(255+3)) {
-                        ++i; ++comment;
-                     }
-                     if (buf[i]!='\n') { // fail on long comment
-                         break;
-                     }
-                     ++i; ++comment;
-                  }
-                  // width
-                  if (!(buf[i]>='0' && buf[i]<='9')) break;
-                  while (buf[i]>='0' && buf[i]<='9') {
-                     wi=wi* 10+buf[i]- '0';
-                     ++i;
-                     if (i>(3+comment+5)) break;
-                  }
-                 // height
-                  if (buf[i]==' ') {
-                     ++i;
-                     if (!(buf[i]>='0' && buf[i]<='9')) break;
-                     while (buf[i]>='0' && buf[i]<='9') {
-                       hi=hi*10+buf[i]-'0';
-                       ++i;
-                        if (i>(3+comment+5+5)) break;
-                    }
-                  }
-                  // max val
-                  if (buf[i]=='\n' && pfState!=IM1_PBM){
-                     ++i;
-                     if (!(buf[i]>='0' && buf[i]<='9')) break;
-                     while (buf[i]>='0' && buf[i]<='9') {
-                       li=li*10+buf[i]-'0';
-                       ++i;
-                        if (i>(3+comment+5+5+4)) break;
-                    }
-                  }
-                  if (i>(3+comment+5+5+4)) {
-                      pfState=IM_NONE;
-                      break;
-                  }
-              }
-              if (wi && hi && li>=0 && li<=255 && pfState==IM8_PGM) imbWidth=wi,pfData=wi*hi+i+1;
-              else if (wi && hi && li==0 && pfState==IM1_PBM) imbWidth=(wi+7)/8,pfData=imbWidth*hi+i+1;
-              else if (wi && hi && li==255 && pfState==IM24_PPM) imbWidth=wi*3,pfData=wi*3*hi+i+1;
-              else pfState=IM_NONE;
-          } else if ((ext==FE_JPG || ext==FE_MP3 && buflen>0x2000) /*&& buflen<=BUFSIZE*/ && buflen>128) {
-              if ((unsigned char)buf[0]==0xFF && (unsigned char)buf[1]==0xD8 && (unsigned char)buf[2]==0xFF && ((unsigned char)(buf[3]&0xf0)==0xE0) || (unsigned char)(buf[3]&0xf0)==0xD0 ) {
-                  pfState=IM_JPG;
-                  pfData=infSize;
-                  imbWidth=1; // fake, to keep all jpeg files in same block
-              } else if (ext==FE_MP3 && buflen>0x2000) {
-                  const uint32_t mpSignature=0xFFF80000;
-                  uint32_t last4=((uint8_t)buf[0]<<24)+((uint8_t)buf[1]<<16)+((uint8_t)buf[2]<<8)+(uint8_t)buf[3];
-                  bool isMP3=(last4==0x49443303); // ID3\3
-                  pfState=IM_NONE;
-                  pfData=0;
-                  imbWidth=0;
-                  for (int i=4; i<0x2000; ++i) {
-                      if ((last4&mpSignature)==mpSignature) { // Test for sync frame
-                          isMP3=true;
-                          break;
-                      }
-                      last4=(last4<<8)+(uint8_t)buf[i];
-                  }
-                  if (isMP3) {
-                      pfState=IM_MP3; //mp3
-                      pfData=infSize;
-                      imbWidth=1; // fake, to keep all files in same block
-                  }
-              } else {
-                  pfState=IM_NONE;
-                  pfData=0;
-                  imbWidth=0;
-              }
-          } else if (ext==FE_VID && buflen>512) { //avi mov jpeg mp4 mkv?
-              if ((unsigned char)buf[0]==0x52 && (unsigned char)buf[1]==0x49 && (unsigned char)buf[2]==0x46 && (unsigned char)buf[3]==0x46 && //RIFF
-                   (unsigned char)buf[112]==0x6d && (unsigned char)buf[113]==0x6a && (unsigned char)buf[114]==0x70 && (unsigned char)buf[115]==0x67  ) { //mjpg
-                  pfState=IM_AVI;
-                  pfData=infSize;
-                  imbWidth=1;
-              } else {
-                  pfState=IM_NONE;
-                  pfData=0;
-                  imbWidth=0;
-              }
-          } else if (ext==FE_PNG && buflen>128) { //png
-              if ((unsigned char)buf[0]==0x89 && (unsigned char)buf[1]==0x50 && (unsigned char)buf[2]==0x4e && (unsigned char)buf[3]==0x47) { 
-                  pfState=IM_PNG;
-                  pfData=infSize;
-                  imbWidth=1;
-                  ext==FE_PNG;
-              } else {
-                  pfState=IM_NONE;
-                  pfData=0;
-                  imbWidth=0;
-              }
-          }else if (ext==FE_GIF && buflen>32) { //gif
-              if ((unsigned char)buf[0]==0x47 && (unsigned char)buf[1]==0x49 && (unsigned char)buf[2]==0x46 && (unsigned char)buf[3]==0x38) { 
-                  pfState=IM_GIF;
-                  pfData=infSize;
-                  imbWidth=1;
-                  ext=FE_GIF;
-              } else {
-                  pfState=IM_NONE;
-                  pfData=0;
-                  imbWidth=0;
-              }
-          }
-          // Reset to default if bad extension/content
-          if (pfState==IM_NONE) {
-              ext=FE_NONE;
-              if (afragment) {
-                MIN_FRAGMENT_NEW=MIN_FRAGMENT;
-                MAX_FRAGMENT_NEW=MAX_FRAGMENT;
-                fragment=oldfragment;
-              }
-          }
-              // Force new type if present
-              if (frags<1 && pfState!=IM_NONE) info=imbWidth, isIMAGE=pfState;
-          }
-          
+          // detect known types at level 3 and up
+          acd.Parse(frags, &buf[0], bufptr, buflen, infSize);
           // process fragment
           if (bufptr>=buflen) c=EOF;
           else c=(unsigned char)buf[bufptr++];
@@ -2820,9 +2992,11 @@ int Jidac::add() {
           }
           if (c==EOF
               || sz>=MAX_FRAGMENT_NEW
+              || acd.TFFragment(sz)
               || (fragment<=22 && h<(1u<<(22-fragment)) && sz>=MIN_FRAGMENT_NEW))
             break;
         }
+        acd.TFNext(sz);
         assert(sz<=MAX_FRAGMENT_NEW);
         total_done+=sz;
         // 
@@ -2886,7 +3060,7 @@ int Jidac::add() {
         // the start of a file that won't fit or doesn't share mutual
         // information with the current block, or last file.
         bool newblock=false;
-        if (frags>0 && fj==0 && fi<vf.size() && pfData==0) {
+        if (frags>0 && fj==0 && fi<vf.size() && acd.PFData()==0) {
           const int64_t esize=vf[fi]->second.size;
           const int64_t newsize=sb.size()+esize+(esize>>14)+4096+frags*4;
           if (newsize>blocksize/4 && redundancy<sb.size()/128) newblock=true;
@@ -2898,22 +3072,10 @@ int Jidac::add() {
           }
           //if (newsize>=blocksize) newblock=true;  // won't fit?
         }
+        // foce new block before and after special type
+        newblock=acd.IsNewBlock(newblock, fsize, sb.size()>0);
         if (sb.size()+sz+80+frags*4>=blocksize) newblock=true; // full?
         if (fi==vf.size()) newblock=true;  // last file?
-        // foce new block before and after special type
-        if (fsize==0) {
-            if (isIMAGE && (imbWidth!=info || (imbWidth/3)>1024)) newblock=true; // file was BMP
-            else if (pfData && sb.size()>0 && (imbWidth!=info || (imbWidth/3)>1024)) newblock=true; // insert first BMP fragment
-            else if (level>2) {
-                if (ext!=FE_JPG && pext==FE_JPG) newblock=true;
-                else if ((ext!=FE_MP3 && pext==FE_MP3) || (pext!=FE_MP3 && ext==FE_MP3)) newblock=true;
-                else if (ext!=FE_VID && pext==FE_VID) newblock=true;
-                else if ((ext!=FE_RAW && pext==FE_RAW) || (pext!=FE_RAW && ext==FE_RAW)) newblock=true; // after and before
-                else if ((ext!=FE_JXL && pext==FE_JXL) || (pext!=FE_JXL && ext==FE_JXL)) newblock=true; // after and before
-                else if ((ext!=FE_PNG && pext==FE_PNG) || (pext!=FE_PNG && ext==FE_PNG)) newblock=true; // after and before
-                else if ((ext!=FE_GIF && pext==FE_GIF) || (pext!=FE_GIF && ext==FE_GIF)) newblock=true; 
-            }
-        }
         if (frags<1) newblock=false;  // block is empty?
         // Pad sb with fragment size list, then compress
         if (newblock) {
@@ -2926,7 +3088,7 @@ int Jidac::add() {
           string m=method;
           if (isdigit(method[0]))
             m+=","+itos(redundancy/(sb.size()/256+1))
-                 +","+itos((exe>frags)*2+(text>frags)+(files>1)*4)+"," +itos(isIMAGE)+"," + itos(info+(info==0?(exe>255?255:exe)*255+(text>255?255:text):0));
+                 +","+itos((exe>frags)*2+(text>frags)+(files>1)*4)+"," +itos(acd.IInfo())+"," + itos(acd.Info()+(acd.Info()==0?(exe>255?255:exe)*255+(text>255?255:text):0));
           string fn="jDC"+itos(date, 14)+"d"+itos(ht.size()-frags, 10);
           print_progress(total_size, total_done, summary);
           if (summary<=0)
@@ -2969,8 +3131,7 @@ int Jidac::add() {
       }
       if (c == EOF) {
           files++;
-          // reset BMP if deduplicated
-          if (pfState && fsize != pfData && fsize!=0 ) pfState=IM_NONE;
+          acd.Eof(fsize);
           break;
       }
     }  // end for each fragment fj
