@@ -1,4 +1,4 @@
-/* libzpaq.h - LIBZPAQ Version 7.15.8f header - May. 29, 2026.
+/* libzpaq.h - LIBZPAQ Version 7.15.9f header - June. 7, 2026.
 
   This software is provided as-is, with no warranty.
   I, Matt Mahoney, release this software into
