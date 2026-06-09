@@ -1,6 +1,6 @@
 // zpaq.cpp - Journaling incremental deduplicating archiver
 
-#define ZPAQ_VERSION "7.15.9f"
+#define ZPAQ_VERSION "7.15.10f"
 /*
   This software is provided as-is, with no warranty.
   I, Matt Mahoney, release this software into
@@ -3034,7 +3034,7 @@ int Jidac::add() {
             1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
         for (int i=0; i<256; ++i) {
           if (o1ct[o1[i]]<255) h1-=(sz*dt[o1ct[o1[i]]++])>>15;
-          if (o1[i]==' ' && (isalnum(i) || i=='.' || i==',')) ++text1;
+          if ((o1[i]==' '|| o1[i]==0x22) && (isalnum(i) || i==0x22 || i=='.' || i==',')) ++text1;
           if (o1[i]=='\n' && (isalnum(i) || i==' ' || i=='\n' || i=='/' || i=='#' || i==9 || '}'|| '>')) ++text1; // more tests
           if (o1[i] && (i<9 || i==11 || i==12 || (i>=14 && i<=31) || i>=240))
             --text1;

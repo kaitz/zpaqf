@@ -1,4 +1,4 @@
-/* libzpaq.cpp - LIBZPAQ Version 7.15.9f implementation - June. 7, 2026.
+/* libzpaq.cpp - LIBZPAQ Version 7.15.10f implementation - June. 9, 2026.
 
   libdivsufsort.c for divsufsort 2.00, included within, is
   (C) 2003-2008 Yuta Mori, all rights reserved.
@@ -8034,84 +8034,75 @@ std::string makeConfig(const char* method, int args[]) {
 #ifdef GPL
     } else if (args[2]&2) {  
     pcomp+=
-     "         a=r 38 a== 1 ifl b=0 d=r 20                      (WBPE failed, just output to file)\n"
+     "         a=r 38 a== 1 ifl b=0 d=r 20        (WBPE failed, just output to file)\n"
       "        do     \n"
       "            a=*b out b++\n"
       "            a=b\n"
       "        a<d while\n"
-      "        elsel a=0 r=a 1 r=a 2 r=a 3 r=a 4 r=a 5 r=a 6 r=a 21 a=r 23 r=a 37\n"
-      "        do b=r 21 d=*b b++ a=b r=a 21                    (d=read byte, pos++)\n"
-      "        a=r 3\n"
-      "        (read header)\n"
-      "        a< 4 if\n"
-      "            a== 0 if\n"
-      "                a=d r=a 4 a= 1 r=a 3                     (esc)\n"
-      "            else \n"
-      "                a== 1 if\n"
-      "                    a=d r=a 5 a= 2 r=a 3                 (cap) \n"
-      "                else \n"
-      "                    a== 2 if\n"
-      "                        a=d r=a 6 a= 3 r=a 3             (upper)\n"
-      "                    else\n"
-      "                        a=r 37 c=a b=r 2 a+=b b=a *b=d   (dict[r1*256+r2]=d)\n"
-      "                        d=*c                             (string lenght)\n"
-      "                        a=r 2 a==d if                    (r2==dict[r1*256])\n"
-      "                            a=r 1 a++ r=a 1 a<<= 8       (r1++)\n"
-      "                            b=r 23 a+=b r=a 37           (c=dict[r1*256])\n"
-      "                            a=0 r=a 2                    (r2=0) \n"
-      "                        else \n"
-      "                            a++ r=a 2\n"
-      "                        endif\n"
-      "                        a=r 1 a> 255 if \n"
-      "                            a= 4 r=a 3 a= 1 r=a 1         (header done)\n"
-      "                        endif \n"
-      "                    endif \n"
-      "                endif \n"
-      "            endif \n"
-      "        else \n"
+      "        elsel a=0 r=a 1 r=a 2 r=a 3 r=a 21 a=r 23 r=a 37\n"
+      /*"        (read header)\n"*/
+      "       b=r 21 a=*b r=a 4 b++ (esc)\n"
+      "       a=*b r=a 5 b++        (cap)\n"
+      "       a=*b r=a 6 b++        (upper)\n"
+      "       a=b r=a 21 \n"
+      "       do b=r 21 d=*b b++ a=b r=a 21        (d=read byte, pos++)\n"
+      "           a=r 37 c=a b=r 2 a+=b b=a *b=d   (dict[r1*256+r2]=d)\n"
+      "           d=*c                             (string lenght)\n"
+      "           a=r 2 a==d if                    (r2==dict[r1*256])\n"
+      "               a=r 1 a++ r=a 1 a<<= 8       (r1++)\n"
+      "               b=r 23 a+=b r=a 37           (c=dict[r1*256])\n"
+      "               a=0 r=a 2                    (r2=0) \n"
+      "           else \n"
+      "                a++ r=a 2\n"
+      "           endif\n"
+      "           a=r 1 a> 255 if \n"
+      "               a= 4 r=a 3 a= 1 r=a 1        (header done)\n"
+      "           endif \n"
+      "        a=r 3 a< 4 while \n"
       /*"        (decode file)\n"*/
-      "        a=r 1 a== 2 a=d if           (ESC)\n"
-      "            out a= 1 r=a 1           (out char, set TEXT=1)\n"
+      "        b=r 21 do  d=*b b++ \n"
+      "        a=r 1 a== 2 if               (ESC)\n"
+      "           a=d out a= 1 r=a 1        (out char, set TEXT=1)\n"
       "        else \n"
-      "        b=r 4 a==b if                (mode ESC=2)\n"
+      "          a=r 4 a==d if              (mode ESC=2)\n"
       "           a= 2 r=a 1\n"
       "        else\n"
-      "            b=r 5 a==b if            (mode CAP=3) \n"
+      "            a=r 5 a==d if            (mode CAP=3) \n"
       "              a= 3 r=a 1\n"
       "            else\n"
-      "                b=r 6 a==b if        (mode UPPER=4)\n"
+      "                a=r 6 a==d if        (mode UPPER=4)\n"
       "                    a= 4 r=a 1\n"
       "                else\n"
-      "                    a<<= 8 b=r 23 a+=b c=a  (r3=char*256)\n"
-      "                    a++ b=a          (r7=r9+1 (string start))\n"
+      "                    a=d a<<= 8 d=r 23 a+=d c=a  (r3=char*256)\n"
+      "                    a++ d=a          (r7=r9+1 (string start))\n"
       "                    a=*c             (string lenght) \n"
-      "                    a+=b             (r8 (string end))\n"
-      "                    c=a do           (out string)\n"
-      "                        a=r 1 a== 1 a=*b ifnot  (TEXT?)  \n"
-      "                            a^= 32  \n"
+      "                    a+=d c=d         (r8 (string end))\n"
+      "                    d=a do           (out string)\n"
+      "                        a=r 1 a== 1 a=*c ifnot  (TEXT?)  \n"
+      "                            a^= 32 \n"
       "                        endif\n"
-      "                        b++ out\n"
+      "                        c++ out\n"
       "                        a=r 1 a== 3 if  (CAP? to TEXT)\n"
       "                           a= 1 r=a 1\n"
       "                        endif\n"
-      "                        a=b\n"
-      "                    a<c while\n"
+      "                        a=c\n"
+      "                    a<d while\n"
       "                    a= 1 r=a 1\n"
       "                endif\n"
       "            endif\n"
-      "        endif endif endif\n"
-      "    a=r 21 d=r 20  a<d while endif\n";
+      "        endif endif\n"
+      "    a=b d=r 20 a<d while endif\n";
 #endif
     } else {
     pcomp+=
-      "        b=0 d=r 20                                              (output dictionary to file)\n"
+      "        b=0 d=r 20                  (output dictionary to file)\n"
       "        do     \n"
       "            a=*b out b++\n"
       "            a=b\n"
       "        a<d while\n";
     }
     pcomp+=
-      "        a= 3 r=a 24                                             (end decode)\n"
+      "        a= 3 r=a 24                 (end decode)\n"
       "    halt\n"
       "end";
 #ifdef GPL
@@ -8137,13 +8128,13 @@ std::string makeConfig(const char* method, int args[]) {
       "                        a=c b=r 2 a+=b b=a *b=d           (dict[r1*256+r2]=d)\n"
       "                        d=*c                              (string lenght)\n"
       "                        a=r 2 a==d if                     (r2==dict[r1*256])\n"
-      "                            a=r 1 a++ r=a 1 a=0 r=a 2     (r2=0, r1++)\n"
-      "                            a=r 1 a<<= 8 c=a              (c=dict[r1*256])\n"
+      "                            a=r 1 a++ r=a 1               (r1++)\n"
+      "                            a<<= 8 c=a a=0 r=a 2          (c=dict[r1*256], r2=0)\n"
       "                        else \n"
       "                            a++ r=a 2\n"
       "                        endif\n"
       "                        a=r 1 a> 255 if \n"
-      "                            a= 4 r=a 3 a= 1 r=a 1          (header done)\n"
+      "                            a= 4 r=a 3 a= 1 r=a 1         (header done)\n"
       "                        endif \n"
       "                    endif \n"
       "                endif \n"
@@ -8354,7 +8345,7 @@ std::string makeConfig(const char* method, int args[]) {
     
      hdr+="hcomp\n"
           "  b=a a=c a== 0 ifl\n"
-          "    (fill 2 bit char map[256])\n"
+          /*"    (fill 2 bit char map[256])\n"*/
           "    d= 255 d++\n"
           "    a=0 do *d= 3 d++ a++ a< 48 while\n"
           "    a=0 do *d= 2 d++ a++ a< 48 while\n"
@@ -8626,14 +8617,14 @@ std::string makeConfig(const char* method, int args[]) {
     hdr="comp 9 16 0 $1+20 ";
     pcomp=
     "pcomp lazy2 3 ;\n"
-    " (r1 = state\n"
+    /*" (r1 = state\n"
     "  r2 = len - match or literal length\n"
     "  r3 = m - number of offset bits expected\n"
     "  r4 = ptr to buf\n"
     "  r5 = r - low bits of offset\n"
     "  c = bits - input buffer\n"
     "  d = n - number of bits in c)\n"
-    "\n"
+    "\n"*/
     "  a> 255 if\n";
     if (doe8)
       pcomp+=
@@ -8658,7 +8649,7 @@ std::string makeConfig(const char* method, int args[]) {
       "    endif\n"
       "\n";
     pcomp+=
-    "    (reset state)\n"
+    /*"    (reset state)\n"*/
     "    a=0 b=0 c=0 d=0 r=a 1 r=a 2 r=a 3 r=a 4\n"
     "    halt\n"
     "  endif\n"
@@ -8666,7 +8657,7 @@ std::string makeConfig(const char* method, int args[]) {
     "  a<<=d a+=c c=a               (bits+=a<<n)\n"
     "  a= 8 a+=d d=a                (n+=8)\n"
     "\n"
-    "  (if state==0 (expect new code))\n"
+    /*"  (if state==0 (expect new code))\n"*/
     "  a=r 1 a== 0 if (match code mm,mmm)\n"
     "    a= 1 r=a 2                 (len=1)\n"
     "    a=c a&= 3 a> 0 if          (if (bits&3))\n"
@@ -8683,7 +8674,7 @@ std::string makeConfig(const char* method, int args[]) {
     "    endif\n"
     "  endif\n"
     "\n"
-    "  (while state==1 && n>=3 (expect match length n*4+ll -> r2))\n"
+    /*"  (while state==1 && n>=3 (expect match length n*4+ll -> r2))\n"*/
     "  do a=r 1 a== 1 if a=d a> 2 if\n"
     "    a=c a&= 1 a== 1 if         (if bits&1)\n"
     "      a=c a>>= 1 c=a             (bits>>=1)\n"
@@ -8705,7 +8696,7 @@ std::string makeConfig(const char* method, int args[]) {
     "  forever endif endif\n"
     "\n";
     if (rb) pcomp+=  // save r in r5
-      "  (if state==5 && n>=8) (expect low bits of offset to put in r5)\n"
+      /*"  (if state==5 && n>=8) (expect low bits of offset to put in r5)\n"*/
       "  a=r 1 a== 5 if a=d a> "+itos(rb-1)+" if\n"
       "    a=c a&= "+itos((1<<rb)-1)+" r=a 5            (save r in r5)\n"
       "    a=c a>>= "+itos(rb)+" c=a\n"
@@ -8714,7 +8705,7 @@ std::string makeConfig(const char* method, int args[]) {
       "  endif endif\n"
       "\n";
     pcomp+=
-    "  (if state==2 && n>=m) (expect m offset bits)\n"
+    /*"  (if state==2 && n>=m) (expect m offset bits)\n"*/
     "  a=r 1 a== 2 if a=r 3 a>d ifnot\n"
     "    a=c r=a 6 a=d r=a 7          (save c=bits, d=n in r6,r7)\n"
     "    b=r 3 a= 1 a<<=b d=a         (d=1<<m)\n"
@@ -8725,7 +8716,7 @@ std::string makeConfig(const char* method, int args[]) {
     pcomp+=
     "    d=a b=r 4 a=b a-=d c=a       (c=p=(b=ptr)-offset)\n"
     "\n"
-    "    (while len-- (copy and output match d bytes from *c to *b))\n"
+    /*"    (while len-- (copy and output match d bytes from *c to *b))\n"*/
     "    d=r 2 do a=d a> 0 if d--\n"
     "      a=*c *b=a c++ b++          (buf[ptr++]-buf[p++])\n";
     if (!doe8) pcomp+=" out\n";
@@ -8738,7 +8729,7 @@ std::string makeConfig(const char* method, int args[]) {
     "    a=0 r=a 1                    (state=0)\n"
     "  endif endif\n"
     "\n"
-    "  (while state==3 && n>=2 (expect literal length))\n"
+    /*"  (while state==3 && n>=2 (expect literal length))\n"*/
     "  do a=r 1 a== 3 if a=d a> 1 if\n"
     "    a=c a&= 1 a== 1 if         (if bits&1)\n"
     "      a=c a>>= 1 c=a              (bits>>=1)\n"
@@ -8752,7 +8743,7 @@ std::string makeConfig(const char* method, int args[]) {
     "    endif\n"
     "  forever endif endif\n"
     "\n"
-    "  (if state==4 && n>=8 (expect len literals))\n"
+    /*"  (if state==4 && n>=8 (expect len literals))\n"*/
     "  a=r 1 a== 4 if a=d a> 7 if\n"
     "    b=r 4 a=c *b=a\n";
     if (!doe8) pcomp+=" out\n";
@@ -8773,7 +8764,7 @@ std::string makeConfig(const char* method, int args[]) {
     hdr="comp 9 16 0 $1+20 ";
     pcomp=
     "pcomp lzpre c ;\n"
-    "  (Decode LZ77: d=state, M=output buffer, b=size)\n"
+    /*"  (Decode LZ77: d=state, M=output buffer, b=size)\n"*/
     "  a> 255 if (at EOF decode e8e9 and output)\n";
     if (doe8)
       pcomp+=
@@ -8801,8 +8792,8 @@ std::string makeConfig(const char* method, int args[]) {
     "  halt\n"
     "  endif\n"
     "\n"
-    "  (in state d==0, expect a new code)\n"
-    "  (put length in r1 and inital part of offset in r2)\n"
+    /*"  (in state d==0, expect a new code)\n"
+    "  (put length in r1 and inital part of offset in r2)\n"*/
     "  c=a a=d a== 0 if\n"
     "    a=c a>>= 6 a++ d=a\n"
     "    a== 1 if (literal?)\n"
@@ -8827,7 +8818,7 @@ std::string makeConfig(const char* method, int args[]) {
     if (!doe8) pcomp+=" out\n";
     pcomp+=
     "        d-- a=d a> 0 while\n"
-    "        (d=state=0. off, len don\'t matter)\n"
+    /*"        (d=state=0. off, len don\'t matter)\n"*/
     "      endif\n"
     "    endif\n"
     "  endif\n"
@@ -8841,14 +8832,14 @@ std::string makeConfig(const char* method, int args[]) {
     pcomp=
     "pcomp bwtrle c ;\n"
     "\n"
-    "  (read BWT, index into M, size in b)\n"
+    /*"  (read BWT, index into M, size in b)\n"*/
     "  a> 255 ifnot\n"
     "    *b=a b++\n"
     "\n"
-    "  (inverse BWT)\n"
+    /*"  (inverse BWT)\n"*/
     "  elsel\n"
     "\n"
-    "    (index in last 4 bytes, put in c and R1)\n"
+    /*"    (index in last 4 bytes, put in c and R1)\n"*/
     "    b-- a=*b\n"
     "    b-- a<<= 8 a+=*b\n"
     "    b-- a<<= 8 a+=*b\n"
@@ -8857,27 +8848,27 @@ std::string makeConfig(const char* method, int args[]) {
     "    (save size in R2)\n"
     "    a=b r=a 2\n"
     "\n"
-    "    (count bytes in H[~1..~255, ~0])\n"
+    /*"    (count bytes in H[~1..~255, ~0])\n"*/
     "    do\n"
     "      a=b a> 0 if\n"
     "        b-- a=*b a++ a&= 255 d=a d! *d++\n"
     "      forever\n"
     "    endif\n"
     "\n"
-    "    (cumulative counts: H[~i=0..255] = count of bytes before i)\n"
+    /*"    (cumulative counts: H[~i=0..255] = count of bytes before i)\n"*/
     "    d=0 d! *d= 1 a=0\n"
     "    do\n"
     "      a+=*d *d=a d--\n"
     "    d<>a a! a> 255 a! d<>a until\n"
     "\n"
-    "    (build first part of linked list in H[0..idx-1])\n"
+    /*"    (build first part of linked list in H[0..idx-1])\n"*/
     "    b=0 do\n"
     "      a=c a>b if\n"
     "        d=*b d! *d++ d=*d d-- *d=b\n"
     "      b++ forever\n"
     "    endif\n"
     "\n"
-    "    (rest of list in H[idx+1..n-1])\n"
+    /*"    (rest of list in H[idx+1..n-1])\n"*/
     "    b=c b++ c=r 2 do\n"
     "      a=c a>b if\n"
     "        d=*b d! *d++ d=*d d-- *d=b\n"
@@ -8886,14 +8877,14 @@ std::string makeConfig(const char* method, int args[]) {
     "\n";
     if (args[0]<=4) {  // faster IBWT list traversal limited to 16 MB blocks
       pcomp+=
-      "    (copy M to low 8 bits of H to reduce cache misses in next loop)\n"
+      /*"    (copy M to low 8 bits of H to reduce cache misses in next loop)\n"*/
       "    b=0 do\n"
       "      a=c a>b if\n"
       "        d=b a=*d a<<= 8 a+=*b *d=a\n"
       "      b++ forever\n"
       "    endif\n"
       "\n"
-      "    (traverse list and output or copy to M)\n"
+     /*"    (traverse list and output or copy to M)\n"*/
       "    d=r 1 b=0 do\n"
       "      a=d a== 0 ifnot\n"
       "        a=*d a>>= 8 d=a\n";
@@ -8905,7 +8896,7 @@ std::string makeConfig(const char* method, int args[]) {
       "\n";
       if (doe8)  // IBWT+E8E9
         pcomp+=
-        "    (e8e9 transform to out)\n"
+        /*"    (e8e9 transform to out)\n"*/
         "    d=b b=0 do (for b=0..d-1, d = end of buf)\n"
         "      a=b a==d ifnot\n"
         "        a+= 4 a<d if\n"
@@ -8933,22 +8924,22 @@ std::string makeConfig(const char* method, int args[]) {
     else {  // slower IBWT list traversal for all sized blocks
       if (doe8) {  // E8E9 after IBWT
         pcomp+=
-        "    (R2 = output size without EOS)\n"
+        /*"    (R2 = output size without EOS)\n"*/
         "    a=r 2 a-- r=a 2\n"
         "\n"
-        "    (traverse list (d = IBWT pointer) and output inverse e8e9)\n"
+        /*"    (traverse list (d = IBWT pointer) and output inverse e8e9)\n"
         "    (C = offset = 0..R2-1)\n"
         "    (R4 = last 4 bytes shifted in from MSB end)\n"
-        "    (R5 = temp pending output byte)\n"
+        "    (R5 = temp pending output byte)\n"*/
         "    c=0 d=r 1 do\n"
         "      a=d a== 0 ifnot\n"
         "        d=*d\n"
         "\n"
-        "        (store byte in R4 and shift out to R5)\n"
+        /*"        (store byte in R4 and shift out to R5)\n"*/
         "        b=d a=*b a<<= 24 b=a\n"
         "        a=r 4 r=a 5 a>>= 8 a|=b r=a 4\n"
         "\n"
-        "        (if E8|E9 xx xx xx 00|FF in R4:R5 then subtract c from x)\n"
+        /*"        (if E8|E9 xx xx xx 00|FF in R4:R5 then subtract c from x)\n"*/
         "        a=c a> 3 if\n"
         "          a=r 5 a&= 254 a== 232 if\n"
         "            a=r 4 a>>= 24 b=a a++ a&= 254 a< 2 if\n"
@@ -8958,13 +8949,13 @@ std::string makeConfig(const char* method, int args[]) {
         "          endif\n"
         "        endif\n"
         "\n"
-        "        (output buffered byte)\n"
+        /*"        (output buffered byte)\n"*/
         "        a=c a> 3 if a=r 5 out endif c++\n"
         "\n"
         "      forever\n"
         "    endif\n"
         "\n"
-        "    (output up to 4 pending bytes in R4)\n"
+        /*"    (output up to 4 pending bytes in R4)\n"*/
         "    b=r 4\n"
         "    a=c a> 3 a=b if out endif a>>= 8 b=a\n"
         "    a=c a> 2 a=b if out endif a>>= 8 b=a\n"
@@ -8977,7 +8968,7 @@ std::string makeConfig(const char* method, int args[]) {
       }
       else {
         pcomp+=
-        "    (traverse list and output)\n"
+        /*"    (traverse list and output)\n"*/
         "    d=r 1 do\n"
         "      a=d a== 0 ifnot\n"
         "        d=*d\n"
@@ -9047,9 +9038,9 @@ std::string makeConfig(const char* method, int args[]) {
     "c-- *c=a a+= 255 d=a *d=c\n";
   if (level==2) {  // put level 2 lz77 parse state in R1, R2
     hcomp+=
-    "  (decode lz77 into M. Codes:\n"
+    /*"  (decode lz77 into M. Codes:\n"
     "  00xxxxxx = literal length xxxxxx+1\n"
-    "  xx......, xx > 0 = match with xx offset bytes to follow)\n"
+    "  xx......, xx > 0 = match with xx offset bytes to follow)\n"*/
     "\n"
     "  a=r 1 a== 0 if (init)\n"
     "    a= "+itos(111+57*doe8)+" (skip post code)\n"
@@ -9101,14 +9092,14 @@ std::string makeConfig(const char* method, int args[]) {
       // special contexts
       hcomp+="d= "+itos(ncomp)+" *d=0\n";
       if (v[2]>1 && v[2]<=255) {  // periodic context
-          hcomp+="  (periodic context)\n";
+          //hcomp+="  (periodic context)\n";
         if (lg(v[2])!=lg(v[2]-1))
           hcomp+="a=c a&= "+itos(v[2]-1)+" hashd\n";
         else
           hcomp+="a=c a%= "+itos(v[2])+" hashd\n";
       }
       else if (v[2]>=1000 && v[2]<=1255) { // distance context
-        hcomp+="  (distance context)\n";
+        //hcomp+="  (distance context)\n";
         hcomp+="a= 255 a+= "+itos(v[2]-1000)+
                " d=a a=*d a-=c a> 255 if a= 255 endif d= "+
                itos(ncomp)+" hashd\n";
@@ -9121,7 +9112,7 @@ std::string makeConfig(const char* method, int args[]) {
         else if (v[i]>0 && v[i]<255)
           hcomp+="  (masked byte)\na=*b a&= "+itos(v[i])+" hashd\n";  // masked byte
         else if (v[i]>=256 && v[i]<512) { // lz77 state or masked literal byte
-            hcomp+="  (lz77 context)\n";
+            //hcomp+="  (lz77 context)\n";
           hcomp+=
           "a=r 1 a> 1 if\n"  // expect literal or offset
           "  a=r 2 a< 64 if\n"  // expect literal
@@ -9168,9 +9159,9 @@ std::string makeConfig(const char* method, int args[]) {
         comp+=" sse "+itos(v[1])+" "+itos(ncomp-1)+" "+itos(v[2])+" "
             +itos(v[3])+"\n";
       if (v[1]>8 && ( (v[3] == 0 && (v[0] == 'm' || v[0] == 't')) || v[0] == 's')) {
-         if (v[0] == 'm') hcomp += "  (mixer context)\n";
+         /*if (v[0] == 'm') hcomp += "  (mixer context)\n";
          if (v[0] == 't') hcomp += "  (mixer2 context)\n";
-         if (v[0] == 's') hcomp += "  (SSE context)\n"; 
+         if (v[0] == 's') hcomp += "  (SSE context)\n"; */
         hcomp+="d= "+itos(ncomp)+" *d=0 b=c a=0\n";
         if (v[0] == 's' && v[4]!=0) {
             if (v[4]<256) hcomp+=" a= "+itos(v[4]&255)+" a+=b b=a a=0 "; 
@@ -9185,7 +9176,7 @@ std::string makeConfig(const char* method, int args[]) {
           hcomp+="a<<= 8 a+=*b a>>= "+itos(16-v[1])+"\n";
         hcomp+="a<<= 8 *d=a\n";
       }else if (v[0] == 'm' && v[1] >= 8 && v[3] > 0) {
-          hcomp += "  (mixer context, high bits)\n";
+          //hcomp += "  (mixer context, high bits)\n";
           // use v[3] upper bits as mask for last byte and set as mixer context
           hcomp += "d= " + itos(ncomp) ;
           if (v[1] > 8){
@@ -9207,7 +9198,7 @@ std::string makeConfig(const char* method, int args[]) {
     // i: ISSE chain with order increasing by N1,N2...
     if (v[0]=='i' && ncomp>0) {
       assert(sb>=5);
-      hcomp += "  (ISSE chain)\n";
+      //hcomp += "  (ISSE chain)\n";
       hcomp+="d= "+itos(ncomp-1)+" b=c a=*d d++\n";
       for (unsigned i=1; i<v.size() && ncomp<254; ++i) {
         for (int j=0; j<v[i]%10; ++j) {
@@ -9226,7 +9217,7 @@ std::string makeConfig(const char* method, int args[]) {
 
     // a24,0,0: MATCH. N1=hash multiplier. N2,N3=halve buf, table.
     if (v[0]=='a') {
-        hcomp += "  (match)\n";
+        //hcomp += "  (match)\n";
       if (v.size()<=1) v.push_back(24);
       while (v.size()<4) v.push_back(0);
       comp+=itos(ncomp)+" match "+itos(membits-v[3]-2)+" "
@@ -9242,7 +9233,7 @@ std::string makeConfig(const char* method, int args[]) {
     // Word is hashed by: hash := hash*N5+c+1
     // Decrease memory by 2^-N6.
     if (v[0]=='w') {
-        hcomp += "  (word)\n";
+        //hcomp += "  (word)\n";
       if (v.size()<=1) v.push_back(1);
       if (v.size()<=2) v.push_back(65);
       if (v.size()<=3) v.push_back(26);
@@ -9279,7 +9270,7 @@ std::string makeConfig(const char* method, int args[]) {
     // N3 last N4'th byte (1) (0=no bytes)
     // N4 indirect width in bytes (0=1,1=2 bytes)
     if (v[0]=='n') {
-         hcomp += "  (indirect and/or byte)\n";
+        // hcomp += "  (indirect and/or byte)\n";
       if (v.size()<=1) v.push_back(0); // 0 icm, 1 isse
       if (v.size()<=2) v.push_back(0); // mask bits
       if (v.size()<=3) v.push_back(0); // shift bits
@@ -9487,6 +9478,8 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
         } else if (type<60)                       // faster if barely compressible
             method+=",14,6,5,0,0,128";
 #ifdef GPL
+        else if (type>=910 && (type&1))
+            method+=",13ci2,6n1,24,8,3,1a24,1,1t";          // WBPE+CM
         else  if (type>=400 && (type&1))
             method+=",14,7,8,0,"+itos(lowP?1:0)+",144,2,1"; // WBPE(CAP)+LZMA for text
         else  if (type>=400 && (info&255)==255 && special==0)
@@ -9499,7 +9492,7 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
                 method+=",14,7,8,0,0,128";
         else
             method+=",14,7,4,0,2,128";
-            //printf("%s\n",method.c_str());
+            
       }
     }
 
