@@ -2264,6 +2264,7 @@ enum FETypes {
     FE_SWF=10,
     FE_TAR=11,
     FE_TIF=12,
+    FE_SCP=13, //SuperCard Pro Image File
 };
 
 struct Extension {
@@ -2272,7 +2273,7 @@ struct Extension {
     const int       mif; // new mid fragment size
 };
 
-static const size_t ExtCapacity=16;
+static const size_t ExtCapacity=17;
 
 static const Extension extension[ExtCapacity]={
     {".jpg", FE_JPG,11},{".jpeg", FE_JPG,11},
@@ -2287,7 +2288,8 @@ static const Extension extension[ExtCapacity]={
     {".mp3", FE_MP3,11},
     {".swf", FE_SWF,0},
     {".tar", FE_TAR,0},
-    {".tif", FE_TIF,11}
+    {".tif", FE_TIF,11},
+    {".scp", FE_SCP,11},
 };
 
 struct MMFragment{
@@ -2403,6 +2405,7 @@ inline bool ACD::IsNewBlock(bool nb, int64_t fsize, bool sb){
                 else if ((ext!=FE_PNG && pext==FE_PNG) || (pext!=FE_PNG && ext==FE_PNG)) newblock=true;
                 else if ((ext!=FE_GIF && pext==FE_GIF) || (pext!=FE_GIF && ext==FE_GIF)) newblock=true;
                 else if ((ext!=FE_TIF && pext==FE_TIF) || (pext!=FE_TIF && ext==FE_TIF)) newblock=true;
+                else if ((ext!=FE_SCP && pext==FE_SCP) || (pext!=FE_SCP && ext==FE_SCP)) newblock=true;
                 //if ((ext!=FE_NONE ||  pext!=FE_NONE) && ext!=pext) newblock=true;
             }
         }
@@ -2624,22 +2627,34 @@ void ACD::Parse(const int frags, const char *buf, const int bufptr, const int bu
                 imbWidth=0;
                 ext=FE_NONE;
             }*/
-        }else if (ext==FE_GIF && buflen>32) { //gif
-            //if ((uint8_t)buf[0]==0x47 && (uint8_t)buf[1]==0x49 && (uint8_t)buf[2]==0x46 && (uint8_t)buf[3]==0x38) { 
-            pfState=IM_GIF;
+        } else if (ext==FE_SCP && buflen>1024) { //scp
+            if ((uint8_t)buf[0]==0x53 && (uint8_t)buf[1]==0x43 && (uint8_t)buf[2]==0x50) { 
+            pfState=DF_SCP;
             pfData=infSize;
             imbWidth=1;
-            /* }else {
+            } else {
                 pfState=IM_NONE;
                 pfData=0;
                 imbWidth=0;
                 ext=FE_NONE;
-            }*/
+            }
         
-        }else if (ext==FE_TIF && buflen>256) { // tiff
+        } else if (ext==FE_TIF && buflen>256) { // tiff
             pfState=IM_TIF;
             pfData=infSize;
             imbWidth=1;
+        } else if (ext==FE_GIF && buflen>32) { //gif
+            if ((uint8_t)buf[0]==0x47 && (uint8_t)buf[1]==0x49 && (uint8_t)buf[2]==0x46 && (uint8_t)buf[3]==0x38) { 
+            pfState=IM_GIF;
+            pfData=infSize;
+            imbWidth=1;
+             }else {
+                pfState=IM_NONE;
+                pfData=0;
+                imbWidth=0;
+                ext=FE_NONE;
+            }
+        
         }
         // Reset to default fragment if bad extension/content
         if (pfState==IM_NONE && ext==FE_NONE) {
