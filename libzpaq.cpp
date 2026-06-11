@@ -9417,7 +9417,9 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method_,
           method+=",14,7,8,0,0,128";
       else if (special==IM_PNG)
           method+=",14,7,6,0,0,128";
-      else if (type<21)  // store if not compressible 20
+      else if (special==IM_TIF && type>=80)
+          method+=",c0,0,1002,255,240i1"; // assume period 3
+      else if (type<25)  // store if not compressible 20
         method+=",0";
       else {
         int lowP=0;

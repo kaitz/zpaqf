@@ -2263,8 +2263,7 @@ enum FETypes {
     FE_MP3=9,
     FE_SWF=10,
     FE_TAR=11,
-    FE_ALL=12,
-    FE_LAST=13
+    FE_TIF=12,
 };
 
 struct Extension {
@@ -2273,7 +2272,7 @@ struct Extension {
     const int       mif; // new mid fragment size
 };
 
-static const size_t ExtCapacity=15;
+static const size_t ExtCapacity=16;
 
 static const Extension extension[ExtCapacity]={
     {".jpg", FE_JPG,11},{".jpeg", FE_JPG,11},
@@ -2287,7 +2286,8 @@ static const Extension extension[ExtCapacity]={
     {".pgm", FE_PM,0},{".pbm", FE_PM,0},{".ppm", FE_PM,0},
     {".mp3", FE_MP3,11},
     {".swf", FE_SWF,0},
-    {".tar", FE_TAR,0}
+    {".tar", FE_TAR,0},
+    {".tif", FE_TIF,11}
 };
 
 struct MMFragment{
@@ -2402,6 +2402,7 @@ inline bool ACD::IsNewBlock(bool nb, int64_t fsize, bool sb){
                 else if ((ext!=FE_JXL && pext==FE_JXL) || (pext!=FE_JXL && ext==FE_JXL)) newblock=true;
                 else if ((ext!=FE_PNG && pext==FE_PNG) || (pext!=FE_PNG && ext==FE_PNG)) newblock=true;
                 else if ((ext!=FE_GIF && pext==FE_GIF) || (pext!=FE_GIF && ext==FE_GIF)) newblock=true;
+                else if ((ext!=FE_TIF && pext==FE_TIF) || (pext!=FE_TIF && ext==FE_TIF)) newblock=true;
                 //if ((ext!=FE_NONE ||  pext!=FE_NONE) && ext!=pext) newblock=true;
             }
         }
@@ -2634,6 +2635,11 @@ void ACD::Parse(const int frags, const char *buf, const int bufptr, const int bu
                 imbWidth=0;
                 ext=FE_NONE;
             }*/
+        
+        }else if (ext==FE_TIF && buflen>256) { // tiff
+            pfState=IM_TIF;
+            pfData=infSize;
+            imbWidth=1;
         }
         // Reset to default fragment if bad extension/content
         if (pfState==IM_NONE && ext==FE_NONE) {
@@ -2918,7 +2924,7 @@ int Jidac::add() {
   ACD acd(level, fragment, level>2?afragment:false, MIN_FRAGMENT, MAX_FRAGMENT, blocksize, BUFSIZE);
   libzpaq::Array<char> fragbuf(acd.MaxFrag());
   vector<unsigned> blocklist;  // list of starting fragments
-  
+  bool blockprogress=false;
   libzpaq::Array<char> buf(BUFSIZE);
 
   // For each file to be added
@@ -3105,6 +3111,7 @@ int Jidac::add() {
           blocklist.push_back(ht.size()-frags);  // mark block start
           frags=redundancy=text=exe=files=0;
           memset(o1prev, 0, sizeof(o1prev));
+          blockprogress=true;
         }
         // Append fragbuf to sb and update block statistics
         assert(sz==0 || fi<vf.size());
@@ -3139,7 +3146,8 @@ int Jidac::add() {
     if (fi<vf.size()) {
       dedupesize+=fsize;
       DTMap::iterator p=vf[fi];
-      print_progress(total_size, total_done, summary);
+      if (blockprogress || summary<=0) print_progress(total_size, total_done, summary);
+      blockprogress=false;
       if (summary<=0) {
         string newname=rename(p->first.c_str());
         DTMap::iterator a=dt.find(newname);

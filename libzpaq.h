@@ -1507,6 +1507,6 @@ void compressBlock(StringBuffer* in, Writer* out, const char* method,
 
 }  // namespace libzpaq
 //
-typedef enum {IM_NONE,IM1_PBM,IM8_PGM,IM24_PPM,IM1_BMP,IM4_BMP,IM8_BMP,IM24_BMP,IM32_BMP,IM_JPG,IM_AVI,IM_GIF,IM_PNG,IM_MP3,FL_CMP} SpecialType;
+typedef enum {IM_NONE,IM1_PBM,IM8_PGM,IM24_PPM,IM1_BMP,IM4_BMP,IM8_BMP,IM24_BMP,IM32_BMP,IM_JPG,IM_AVI,IM_GIF,IM_PNG,IM_MP3,IM_TIF,FL_CMP} SpecialType;
 
 #endif  // LIBZPAQ_H
