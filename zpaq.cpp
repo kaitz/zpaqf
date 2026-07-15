@@ -68,6 +68,7 @@ Possible options:
 #include <string>
 #include <vector>
 #include <map>
+#include <list>
 #include <algorithm>
 #include <stdexcept>
 #include <fcntl.h>
@@ -2232,24 +2233,6 @@ struct WriterPair: public libzpaq::Writer {
 };
 
 
-struct TAR_header{
-    char name[100+8+8+8];
-    //char mode[8];
-    //char uid[8];
-    //char gid[8];
-    char size[12];
-    //char mtime[12];
-    //char chksum[8];
-    //char linkflag;
-    //char linkname[100];
-    //char magic[8];
-    //char uname[32];
-    //char gname[32];
-    //char major[8];
-    //char minor[8];
-    char pad[167+12+8+1+100+8+32+32+8+8];
-};
-
 enum FETypes {
     FE_NONE=0,
     FE_JPG=1,
@@ -2265,6 +2248,28 @@ enum FETypes {
     FE_TAR=11,
     FE_TIF=12,
     FE_SCP=13, //SuperCard Pro Image File
+    FE_WARC=14,
+    FE_PDF,
+    FE_CSS,
+    FE_HTML,
+    FE_WEBP,
+    FE_WOFF2,
+    FE_ZIP,
+    FE_JS,
+    FE_JSON,
+    FE_MP4,
+    FE_TS,
+    FE_WEBM,
+    FE_SVG,
+    FE_XML,
+    FE_BIN,
+    FE_TXT,
+    FE_MPEG
+};
+
+struct contentlist{
+      int64_t size;
+      FETypes ext;
 };
 
 struct Extension {
@@ -2273,9 +2278,10 @@ struct Extension {
     const int       mif; // new mid fragment size
 };
 
-static const size_t ExtCapacity=17;
+static const int ExtCapacity=18+15+1+1;
 
 static const Extension extension[ExtCapacity]={
+    {"", FE_NONE,0},
     {".jpg", FE_JPG,11},{".jpeg", FE_JPG,11},
     {".png", FE_PNG,11},
     {".gif", FE_GIF,11},
@@ -2290,23 +2296,493 @@ static const Extension extension[ExtCapacity]={
     {".tar", FE_TAR,0},
     {".tif", FE_TIF,11},
     {".scp", FE_SCP,11},
+    {".warc",FE_WARC,0},
+
+    {".pdf",FE_PDF,0},
+    {".css",FE_CSS,0},
+    {".html",FE_HTML,0},
+    {".webp",FE_WEBP,11},
+    {".woff2",FE_WOFF2,11},
+    {".zip",FE_ZIP,0},
+    {".js",FE_JS,0},
+    {".json",FE_JSON,0},
+    {".mp4",FE_MP4,11},
+    {".ts",FE_TS,11},
+    {".webm",FE_WEBM,11},
+    {".svg",FE_SVG,0},
+    {".xml",FE_XML,0},
+    {".bin",FE_BIN,0},
+    {".txt",FE_TXT,0},
+    {".mpeg",FE_MPEG,11}
 };
 
-struct MMFragment{
+
+class ExtManager {
+    struct MMFragment{
       unsigned min;
       unsigned max;
       unsigned   f;
+      FETypes    t;
+    };
+    int f;
+    libzpaq::Array<MMFragment> ExtFrags;
+    bool af;
+    unsigned maxFragment,minFragment;
+  public:
+    inline unsigned MaxFrag() {return maxFragment;}
+    inline unsigned MinFrag() {return minFragment;}
+    inline unsigned ExtMax(int i) {return ExtFrags[i].max;}
+    inline unsigned ExtMin(int i) {return ExtFrags[i].min;}
+    inline unsigned ExtFrag(int i) {return ExtFrags[i].f;}
+    inline FETypes ExtType(int i) {return ExtFrags[i].t;}
+    ExtManager(int f, bool af, const unsigned blocksize, unsigned mif, unsigned maf):f(f), ExtFrags(ExtCapacity), af(af),
+    maxFragment(maf),minFragment(mif) {
+    // Use custom fragment sizes ranges for known file types, if defined is larger then extend
+    for (unsigned i=0; i<ExtCapacity; ++i) { 
+      if (af && extension[i].mif>0) {
+        const unsigned newfrag=f>extension[i].mif?extension[i].mif+(f-extension[i].mif):extension[i].mif;
+        ExtFrags[i].f=newfrag;
+        ExtFrags[i].max=newfrag>19 || (8128u<<newfrag)>blocksize-12 ? blocksize-12 : 8128u<<newfrag;
+        ExtFrags[i].min=newfrag>25 || (64u<<newfrag)>ExtFrags[i].max ? ExtFrags[i].max : 64u<<newfrag;
+        if (ExtFrags[i].max>maxFragment) maxFragment=ExtFrags[i].max;
+        ExtFrags[i].t=extension[i].t;
+      } else {
+        ExtFrags[i].min=mif;
+        ExtFrags[i].max=maf;
+        ExtFrags[i].f=f;
+        ExtFrags[i].t=extension[i].t;
+      }
+      assert(ExtFrags[i].f>=0);
+      assert(ExtFrags[i].max>0);
+      assert(ExtFrags[i].min>0);
+    }
+    }
+    int GetExtension(const std::string e) {
+    if (e.size()) {
+      for (int i=0; i<ExtCapacity; ++i) {
+        if (extension[i].e==e) {
+          return i;
+        }
+      }
+    }
+    return -1;
+}
+
+int GetExtensionFE(FETypes t) {
+    for (int i=0; i<ExtCapacity; ++i) {
+        if (extension[i].t==t) {
+            return i;
+        }
+    }
+    return -1;
+}
+    
 };
+// v0.2
+namespace warcfile {
+using namespace libzpaq;
+static const char WCR=0x0d;
+static const char WLF=0x0a;
+
+enum EnumLineTypes {
+    LTYPE_NONE,LTYPE_LF,LTYPE_CRLF
+};
+
+enum WarcFields{
+    WARC_TYPE,
+    WARC_RECORD_ID,
+    WARC_DATE,
+    CONTENT_LENGTH,
+    CONTENT_TYPE,
+    WARC_CONCURRENT_TO,
+    WARC_BLOCK_DIGEST,
+    WARC_PAYLOAD_DIGEST,
+    WARC_IP_ADDRESS,
+    WARC_REFERS_TO,
+    WARC_RESERVED1,
+    WARC_REFERS_TO_TARGET_URI,
+    WARC_REFERS_TO_DATE,
+    WARC_RESERVED2,
+    WARC_TARGET_URI,
+    WARC_TRUNCATED,
+    WARC_WARCINFO_ID,
+    WARC_FILENAME,
+    WARC_PROFILE,
+    WARC_IDENTIFIED_PAYLOAD_TYPE,
+    WARC_SEGMENT_ORIGIN_ID,
+    WARC_SEGMENT_NUMBER,
+    WARC_SEGMENT_TOTAL_LENGTH,
+    WARC_PROTOCOL,      // proposed ?
+    WARC_CIPHER_SUITE,  // proposed ?
+    WARC_PAGE_ID,       // proposed ?
+    WARC_JSON_METADATA,  // proposed ?
+    WARC_RESOURCE_TYPE   // proposed ?
+};
+
+struct field {
+    int id;
+    std::string value;
+};
+
+static const std::vector<field> WARC_FIELDS={
+    {WARC_TYPE , "WARC-Type"},
+    {WARC_RECORD_ID , "WARC-Record-ID"},
+    {WARC_DATE , "WARC-Date"},
+    {CONTENT_LENGTH , "Content-Length"},
+    {CONTENT_TYPE , "Content-Type"},
+    {WARC_CONCURRENT_TO , "WARC-Concurrent-To"},
+    {WARC_BLOCK_DIGEST , "WARC-Block-Digest"},
+    {WARC_PAYLOAD_DIGEST , "WARC-Payload-Digest"},
+    {WARC_IP_ADDRESS , "WARC-IP-Address"},
+    {WARC_REFERS_TO , "WARC-Refers-To"},
+    {WARC_RESERVED1 , "WARC_RESERVED1"},
+    {WARC_REFERS_TO_TARGET_URI , "WARC-Refers-To-Target-URI"},
+    {WARC_REFERS_TO_DATE , "WARC-Refers-To-Date"},
+    {WARC_RESERVED2 , "WARC_RESERVED2"},
+    {WARC_TARGET_URI , "WARC-Target-URI"},
+    {WARC_TRUNCATED , "WARC-Truncated"},
+    {WARC_WARCINFO_ID , "WARC-Warcinfo-ID"},
+    {WARC_FILENAME , "WARC-Filename"},
+    {WARC_PROFILE , "WARC-Profile"},
+    {WARC_IDENTIFIED_PAYLOAD_TYPE , "WARC-Identified-Payload-Type"},
+    {WARC_SEGMENT_ORIGIN_ID , "WARC-Segment-Origin-ID"},
+    {WARC_SEGMENT_NUMBER , "WARC-Segment-Number"},
+    {WARC_SEGMENT_TOTAL_LENGTH , "WARC-Segment-Total-Length"},
+    {WARC_PROTOCOL , "WARC-Protocol"},
+    {WARC_CIPHER_SUITE , "WARC-Cipher-Suite"},
+    {WARC_PAGE_ID , "WARC-Page-ID"},
+    {WARC_JSON_METADATA , "WARC-JSON-Metadata"},
+    {WARC_RESOURCE_TYPE , "WARC-Resource-Type"}
+};
+
+int get_warc_field_id(std::string name) {
+    for(int i=0; i < WARC_FIELDS.size(); i++) {
+        if (WARC_FIELDS[i].value==name) return WARC_FIELDS[i].id;
+    }
+    return -1;
+}
+std::string get_warc_field_name(int id) {
+    for(int i=0; i < WARC_FIELDS.size(); i++) {
+        if (WARC_FIELDS[i].id==id) return WARC_FIELDS[i].value;
+    }
+    return "";
+}
+
+class Reader{
+    private:
+        FP in;
+        std::string line;
+        EnumLineTypes linetype;
+        std::string block;
+        bool isEOF;
+        int64_t curpos;
+        const int BUFSIZE;  // input buffer 64k
+        libzpaq::Array<char> buf;
+        int bufptr, buflen;
+        int64_t filepos;
+        int getc() {
+            int c=0;
+            if (bufptr>=buflen) bufptr=0, buflen=fread(&buf[0], 1, BUFSIZE, in);
+            if (bufptr>=buflen) c=EOF;
+            else c=(unsigned char)buf[bufptr++],filepos++;
+            return c;
+        }
+        
+    public:
+        explicit Reader(FP in): in(in),isEOF(false),BUFSIZE(4096*16),buf(BUFSIZE),bufptr(0), buflen(0),filepos(0) {
+            curpos=ftello(in);
+            fseeko(in, 0, SEEK_SET);
+        };
+        ~Reader() {
+             fseeko(in, curpos, SEEK_SET);
+             //printf("WARC restored pos: %d\n",curpos);
+        }
+        std::string const &ReadLine() {
+            line="";
+            linetype=LTYPE_NONE;
+            int c=0;
+            while ((c=getc())!=EOF) {
+                line=line+char(c);
+                if (c==WCR) line.pop_back(),linetype=LTYPE_CRLF;
+                else if (c==WLF) {
+                    if (linetype!=LTYPE_CRLF) linetype=LTYPE_LF;
+                    line.pop_back();
+                    break;
+                }
+            }
+            isEOF=c==EOF;
+            return line;
+        }
+        std::string const &ReadBlock(int size) {
+            block="";
+            block.resize(size);
+            int len=0;
+            int c=0;
+            while (len<size) {
+               c=getc();
+               if (c==EOF) break;
+               block[len]=char(c);
+               len++;
+            }
+            if (len!=size) isEOF=true;
+            block.resize(len);
+            return block;
+        }
+        std::string const &LastLine() { return line;}
+        EnumLineTypes const LineType() { return linetype;}
+        bool End() { return isEOF; }
+        void close() {fclose(in); }
+        int64_t tell() {return filepos; }
+};
+
+class WarcField {
+    public:
+        std::string value;
+        int id;
+        WarcField() { };
+};
+
+class WarcRecord {
+    public:
+        std::string version;
+        std::vector<WarcField> fields;
+        std::string content;
+        int64_t pos;
+        int64_t size;
+        int64_t cpos;
+        int64_t csize;
+        std::string ext;
+        WarcRecord() { };
+};
+std::string SplitString(std::string linef, char spilt, int i) {
+    auto p=std::find(linef.begin(), linef.end(), spilt);
+    std::string fieldn1="";
+    std::string fieldn2="";
+    std::move(linef.begin(), p, std::back_inserter(fieldn1));
+    p++; // ':'
+    std::move(p, linef.end(), std::back_inserter(fieldn2));
+    if (i==0) {
+        return fieldn1;
+    } else if (i==1) {
+        return fieldn2;
+    }else return "";
+                    
+}
+std::string mimeToExt(std::string file) {
+    std::string ext="";
+    std::transform(file.begin(), file.end(), file.begin(), [](unsigned char c){ return std::tolower(c); });
+    if (file=="jpeg") ext=".jpg";
+    else if (file.substr(0,3)=="pdf") ext=".pdf";
+    else if (file=="css" || file.substr(0,4)== "css;") ext=".css";
+    else if (file.substr(0,4)=="html") ext=".html";
+    else if (file=="gif") ext=".gif";
+    else if (file.substr(0,4)=="webp") ext=".webp";
+    else if (file=="woff2" || file=="font-woff2") ext=".woff2";
+    else if (file.substr(0,3)=="zip") ext=".zip";
+    else if (file.substr(0,10)== "javascript"|| file.substr(0,13)== "x-javascript") ext=".js";
+    else if (file=="json" || file.substr(0,5)=="json;") ext=".json";
+    else if (file=="mp4") ext=".mp4";
+    else if (file=="mpeg") ext=".mpeg";
+    else if (file=="mp2t") ext=".ts";
+    else if (file=="bmp") ext=".bmp";
+    else if (file=="webm") ext=".webm";
+    else if (file=="png") ext=".png";
+    else if (file=="svg+xml") ext=".svg";
+    else if (file.substr(0,8)=="atom+xml") ext=".xml";
+    else if (file.substr(0,7)=="rss+xml") ext=".xml";
+    else if (file.substr(0,7)=="rdf+xml") ext=".xml";
+    else if (file.substr(0,3)=="xml") ext=".xml";
+    else if (file.substr(0,9)=="xhtml+xml") ext=".xml";
+    else if (file.substr(0,12)=="octet-stream") ext=".bin";
+    else if (file.substr(0,5)=="plain") ext=".txt";
+    return ext;
+}
+
+class WarcFile {
+    private:
+        Reader file;
+        std::string outfile;
+        std::vector<WarcRecord> records;
+        ExtManager &extm;
+    public:
+        WarcFile(FP in,ExtManager &extm) : file(in),extm(extm) { };
+        ~WarcFile() { };
+        bool ReadRecord(bool doContent=true) {
+            if (file.End()) {
+                return false;
+            }
+            std::string line="";
+            WarcRecord record;
+            line=file.ReadLine();
+            char lastc=line.back();
+            if (!line.empty()) line.erase(std::prev(line.end()));
+            if (line=="WARC/1." && (lastc=='0' || lastc=='1')){
+                while (line=file.ReadLine(), line.size()>0 && file.End()==false) {
+                    WarcField field;
+                    auto p=std::find(line.begin(), line.end(), ':');
+                    std::string fieldname;
+                    std::move(line.begin(), p, std::back_inserter(fieldname));
+                    int fieldID=get_warc_field_id(fieldname);
+                    if (fieldID==-1) {
+                       //printf("Unexpected field %s\n", fieldname.c_str());
+                       //exit(1);
+                       return false;
+                    }
+                    field.id=fieldID;
+                    p++; // ':'
+                    std::move(p, line.end(), std::back_inserter(field.value));
+                    std::string field1=get_warc_field_name(field.id);
+                    record.fields.push_back(field);
+               }
+            } else {
+                return false;
+            }
+            int contentSize=0;
+
+            for(auto j=0; j<record.fields.size(); j++) {
+                if (record.fields[j].id==CONTENT_LENGTH) {
+                    contentSize=std::stoi(record.fields[j].value);
+                    break;
+                }
+            }
+            // in list mode skip content reading and seek to next entry
+            if (doContent==true) {
+                std::string content=file.ReadBlock(contentSize);
+                record.content=content;
+                if (contentSize!=content.size()) {
+                   //printf("Content not same size %d %d\n", contentSize, content.size());
+                   return false;
+                }
+            } else {
+                record.pos=file.tell();
+                record.size=int64_t(contentSize);
+                std::string content=file.ReadBlock(contentSize);
+                //split mode
+                auto p=std::find(content.begin(), content.end(), '\n');
+                std::string fieldname;
+                std::string contentfile;
+                std::move(content.begin(), p-1, std::back_inserter(fieldname));
+                
+                if (fieldname.size()>1 && (fieldname.substr(0,12)=="HTTP/1.1 200")) {
+                    auto p=std::find(content.begin(), content.end(), '\n');
+                    std::string lflf="\r\n\r\n";
+                    auto p1=std::search(content.begin(), content.end(), lflf.begin(), lflf.end());
+                    fieldname="";
+                    std::move(content.begin(), p1, std::back_inserter(fieldname));
+                    std::string header=fieldname;
+                    std::string del="\r\n";
+                    auto pos = fieldname.find(del);
+                    // Search for content type
+                    std::string ext="";
+                    while (1) {
+                        std::string linef= fieldname.substr(0, pos);
+                        std::string value;
+                        auto p=std::find(linef.begin(), linef.end(), ':');
+                        std::string fieldn="";
+                        const std::string contenttype="content-type";
+                        std::move(linef.begin(), p, std::back_inserter(fieldn));
+                        std::transform(fieldn.begin(), fieldn.end(), fieldn.begin(), [](unsigned char c){ return std::tolower(c); });
+                        int fieldID=fieldn==contenttype?1:0;
+                        p++; // ':'
+                        std::move(p, linef.end(), std::back_inserter(value));
+                        if (fieldID>0) {
+                            std::string app=SplitString(value,'/',0);
+                            std::string file=SplitString(value,'/',1);
+                            ext=mimeToExt(file);
+                            break;
+                        }
+                        if (pos==std::string::npos) break;
+                        fieldname.erase(0, pos + del.length());
+                        pos=fieldname.find(del);
+                    }
+                   record.cpos= header.length()+4;
+                   record.ext=ext;
+                }
+            }
+            
+            records.push_back(record);
+            line=file.ReadLine();
+            if (file.LineType()!=LTYPE_CRLF) return false;//printf("Line type wrong\n");
+            line=file.ReadLine();
+            if (file.LineType()!=LTYPE_CRLF) return false;//printf("Line type wrong\n");
+            return true;
+        }
+
+        void ListWARC(std::list<contentlist> &content) {
+            const int field=WARC_TARGET_URI;
+            int64_t content_count=0;
+            int64_t last_content_end=0;
+            for(auto i=0; i <records.size(); i++) {
+                int fid=-1;
+                int tid=-1;
+                std::string value="";
+                std::string ext="";
+                int64_t pos=0,size=0,cpos=0;
+                for(auto j=0; j<records[i].fields.size(); j++) { 
+                    if (fid==-1 && records[i].fields[j].id==WARC_TYPE && records[i].fields[j].value==" response") { // webserver response
+                        fid=records[i].fields[j].id; 
+                    } if (tid==-1 && records[i].fields[j].id==field) {
+                        tid=records[i].fields[j].id;
+                        value=records[i].fields[j].value;
+                        pos=records[i].pos;
+                        size=records[i].size;
+                        cpos=records[i].cpos;
+                        ext=records[i].ext;
+                    }
+                }
+                if (fid!=-1 && tid!=-1) {
+                    if (value.size()>1) {
+                        int64_t content_pos=pos+cpos;
+                        int64_t content_size=size-cpos;
+                        if (content_size>4) {
+                            contentlist cl;
+                            cl.ext=FE_WARC;
+                            if (content_count==0) {
+                                cl.size=content_pos;
+                                content.push_back(cl);
+                            }
+                            content_count++;
+                            if (last_content_end) {
+                                cl.size=content_pos-last_content_end;
+                                content.push_back(cl);
+                            }
+                            last_content_end=content_pos+content_size;
+                            cl.size=content_size;
+                            int a=extm.GetExtension(ext);
+                            cl.ext=FE_NONE;
+                            if (a!=-1) {
+                               cl.ext=extm.ExtType(a);
+                            }
+                            content.push_back(cl);
+                        }
+                    }
+                }
+                pos=0,size=0,cpos=0;
+            }
+            //printf("Records: %d\n",records.size());
+            //printf("Records usable: %d\n",content.size());
+        }
+};
+}
+using namespace warcfile;
+
+struct TAR_header{
+    char name[124];
+    char size[12];
+    char pad[376];
+};
+
+
 //Adaptive content detection
 class ACD {
 public:
   ACD(int l, int f, bool af, unsigned mif, unsigned maf, const unsigned blocksize, const int BUFSIZE);
   inline void NextFile() { pext=ext;}
-  inline bool TFFragment(int64_t z) {return ext==FE_TAR && z==tarFragment;} // transparent file fragment (tar, ...)
+  inline bool TFFragment(int64_t z) {return isTFF && z==fileFragment;} // transparent file fragment (tar, ...)
   void TFNext(int64_t z);
   bool SetExtension(const std::string e);
   void NextFileStart();
-  void Parse(const int frags, const char *buf, const int bufptr, const int buflen, const int64_t infSize);
+  void Parse(const int frags, const char *buf, const int bufptr, const int buflen, const int64_t infSize, FP in);
   inline unsigned MinFrag() {return minFragment;}
   inline unsigned MaxFrag() {return maxFragment;}
   inline unsigned Frag() {return f;}
@@ -2315,6 +2791,8 @@ public:
   inline int Info() { return info;}
   inline int PFData() { return pfData;}
   inline int IInfo() { return isIMAGE;}
+  bool ChangeFragment(){ return isNewFragment; }
+  bool ForceNewBlock(bool b){ return b || isNewBlock; }
 private:
   int64_t TAR_GetOctal(const char *p, int n);
   int64_t TAR_Checksum(char *p);
@@ -2322,11 +2800,11 @@ private:
   int level;
   int f,of;
   bool af;
-  libzpaq::Array<MMFragment> ExtFrags;
+  
   unsigned maxFragment,minFragment;
   const unsigned dmaxFragment,dminFragment;
   FETypes pext,ext;
-  int64_t tarFragment,tarFragmentNext,tarFragmentPad;
+  int64_t fileFragment,fileFragmentNext,fileFragmentPad;
   SpecialType pfState,isIMAGE;
   int info;
   int pfData,imbWidth;
@@ -2334,39 +2812,31 @@ private:
   int64_t file_done;
   const int BUFSIZE;
   const unsigned blocksize;
+  WarcFile *wfile;
+  std::list<contentlist> content;
+  bool isTFF;
+  ExtManager extm;
+  bool isNewFragment,isNewBlock,isNewBlockNext;
 };
-ACD::ACD(int l, int f, bool af, unsigned mif, unsigned maf, const unsigned blocksize, const int BUFSIZE):level(l),f(f),of(f),af(af),ExtFrags(ExtCapacity),
+ACD::ACD(int l, int f, bool af, unsigned mif, unsigned maf, const unsigned blocksize, const int BUFSIZE):level(l),f(f),of(f),af(af),
   maxFragment(maf),minFragment(mif),dmaxFragment(maf),dminFragment(mif),pext(FE_NONE),ext(FE_NONE),
-  tarFragment(0),tarFragmentNext(0),tarFragmentPad(0),
+  fileFragment(0),fileFragmentNext(0),fileFragmentPad(0),
   pfState(IM_NONE),isIMAGE(IM_NONE),info(0),pfData(0),imbWidth(0),fileStart(false),
-  file_done(0),BUFSIZE(BUFSIZE),blocksize(blocksize) {
-  // Use custom fragment sizes ranges for known file types, if defined is larger then extend
-    for (unsigned i=0; i<ExtCapacity; ++i) { 
-      if (af && extension[i].mif>0) {
-        const unsigned newfrag=f>extension[i].mif?extension[i].mif+(f-extension[i].mif):extension[i].mif;
-        ExtFrags[i].f=newfrag;
-        ExtFrags[i].max=newfrag>19 || (8128u<<newfrag)>blocksize-12 ? blocksize-12 : 8128u<<newfrag;
-        ExtFrags[i].min=newfrag>25 || (64u<<newfrag)>ExtFrags[i].max ? ExtFrags[i].max : 64u<<newfrag;
-        if (ExtFrags[i].max>maxFragment) maxFragment=ExtFrags[i].max;
-      } else {
-        ExtFrags[i].min=mif;
-        ExtFrags[i].max=maf;
-        ExtFrags[i].f=f;
-      }
-      assert(ExtFrags[i].f>=0);
-      assert(ExtFrags[i].max>0);
-      assert(ExtFrags[i].min>0);
-    }
+  file_done(0),BUFSIZE(BUFSIZE),blocksize(blocksize),content(0),isTFF(false),extm(f,af,blocksize,mif,maf),
+  isNewFragment(false),isNewBlock(false),isNewBlockNext(false) {
+      maxFragment=extm.MaxFrag();
+  
 }
 inline void ACD::Eof(int64_t fsize) {
     if (pfState && fsize != pfData && fsize!=0 ) pfState=IM_NONE;
 }
 inline void ACD::TFNext(int64_t z) {
-    if (tarFragment) {
-        tarFragment-=z;
-        if (tarFragment==0) tarFragment=tarFragmentNext,tarFragmentNext=tarFragmentPad,tarFragmentPad=0;
+    if (fileFragment) {
+        fileFragment-=z;
+        if (fileFragment==0) fileFragment=fileFragmentNext,fileFragmentNext=fileFragmentPad,fileFragmentPad=0;
     }
     file_done+=z;
+    isNewBlock=false;
 }
 void ACD::NextFileStart() {
     isIMAGE=pfState;
@@ -2374,19 +2844,19 @@ void ACD::NextFileStart() {
     pfState=IM_NONE,imbWidth=0;
     fileStart=false;
     file_done=0;
+    isTFF=false;
 }
 bool ACD::SetExtension(const std::string e) {
     ext=FE_NONE;
-    for (unsigned i=0; i<ExtCapacity; ++i) {
-      if (extension[i].e==e) {
-        ext=extension[i].t;
-        if (af) {
-          minFragment=ExtFrags[i].min;
-          maxFragment=ExtFrags[i].max;
-          f=ExtFrags[i].f;
-          return true;
-        }
-        return false;
+    if (e.size()) {
+        int exti=extm.GetExtension(e);
+        if (exti!=-1) {
+            if (exti>=ExtCapacity) exti=0; // FE_NONE 
+            minFragment=extm.ExtMin(exti); 
+            maxFragment=extm.ExtMax(exti);
+            f=extm.ExtFrag(exti);
+            ext=extm.ExtType(exti);
+            return true;
       }
     }
     return false;
@@ -2435,8 +2905,9 @@ inline bool ACD::TAR_End(const char *p) {
     return p[0] == 0 && !memcmp(p, p + 1, 512 - 1);
 }
 
-void ACD::Parse(const int frags, const char *buf, const int bufptr, const int buflen, const int64_t infSize) {
-    if ((ext==FE_TAR /*|| fileStart==false && ext==FE_NONE*/) && buflen>1024 && tarFragment==0) {
+void ACD::Parse(const int frags, const char *buf, const int bufptr, const int buflen, const int64_t infSize, FP in) {
+    isNewFragment=false;
+    if (ext==FE_TAR && buflen>1024 && fileFragment==0) {
         fileStart=true;
         TAR_header &tarHdr=(TAR_header&)buf[bufptr];
         bool badTAR=false;
@@ -2451,12 +2922,36 @@ void ACD::Parse(const int frags, const char *buf, const int bufptr, const int bu
             else if (tfsize==0) tfp=512;
             else tfp=tfsize;
             
-            tarFragment=512, tarFragmentNext=tfsize;
-            tarFragmentPad=tfp-tfsize;
+            fileFragment=512, fileFragmentNext=tfsize;
+            fileFragmentPad=tfp-tfsize;
             if ((file_done+tfp)>(infSize-512)) badTAR=true;
+            isTFF=true;
         }
-        if (badTAR) ext=FE_NONE,tarFragment=tarFragmentNext=tarFragmentPad=0;
+        if (badTAR) ext=FE_NONE,fileFragment=fileFragmentNext=fileFragmentPad=0,isTFF=false;
     }
+    else if (ext==FE_WARC && buflen>1024 && fileFragment==0) {
+        if (fileStart==false) {
+            wfile=new WarcFile(in,extm);
+            while (wfile->ReadRecord(false));
+            wfile->ListWARC(content);
+            delete wfile;
+            isTFF=true;
+            //printf("WARC large fragments %d\n",content.size());
+        }
+        fileStart=true;
+        if (content.size()>0) {
+            isNewBlock=isNewBlockNext;
+            isNewBlockNext=false;
+            contentlist cl=content.front();
+            fileFragment=cl.size;
+            content.pop_front();
+            int a=extm.GetExtensionFE(cl.ext);
+            minFragment=extm.ExtMin(a); 
+            maxFragment=extm.ExtMax(a);
+            f=extm.ExtFrag(a);
+            isNewFragment=true;
+        } else ext=FE_NONE,isTFF=false;
+   }
     else if (level>2 && ext!=FE_NONE && fileStart==false && pfState==IM_NONE) {
         fileStart=true;
         if (ext==FE_BMP && buflen==BUFSIZE) {
@@ -2936,7 +3431,7 @@ int Jidac::add() {
   const int level=isdigit(method[0])?(method[0]-'0'):-1;
   unsigned char o1prev[ON*256]={0};  // last ON order 1 predictions
   const int BUFSIZE=4096*16;  // input buffer 64k
-  ACD acd(level, fragment, level>2?afragment:false, MIN_FRAGMENT, MAX_FRAGMENT, blocksize, BUFSIZE);
+  ACD acd(level, fragment, afragment, MIN_FRAGMENT, MAX_FRAGMENT, blocksize, BUFSIZE);
   libzpaq::Array<char> fragbuf(acd.MaxFrag());
   vector<unsigned> blocklist;  // list of starting fragments
   bool blockprogress=false;
@@ -2971,14 +3466,18 @@ int Jidac::add() {
       }
       infSize=p->second.size;
       p->second.data=1;  // add
-      if (p->first.size()>4) {
-          std::string fext=p->first.substr(p->first.size()-4);
-          std::transform(fext.begin(), fext.end(), fext.begin(),[](unsigned char c){ return std::tolower(c); });
+      if (p->first.size()>3) {
+          std::string fext="";
+          std::string::size_type dotp= p->first.rfind('.');
+          if(dotp != std::string::npos) {
+              fext = p->first.substr(dotp);
+              std::transform(fext.begin(), fext.end(), fext.begin(),[](unsigned char c){ return std::tolower(c); });
+          }
           if (acd.SetExtension(fext)) {
               MIN_FRAGMENT_NEW=acd.MinFrag();
               MAX_FRAGMENT_NEW=acd.MaxFrag();
               fragment=acd.Frag();
-          }   
+          }
       }
     }
 
@@ -3000,7 +3499,12 @@ int Jidac::add() {
         while (true) {
           if (bufptr>=buflen) bufptr=0, buflen=fread(&buf[0], 1, BUFSIZE, in);
           // detect known types at level 3 and up
-          acd.Parse(frags, &buf[0], bufptr, buflen, infSize);
+          acd.Parse(frags, &buf[0], bufptr, buflen, infSize, in);
+          if (acd.ChangeFragment()) {
+              MIN_FRAGMENT_NEW=acd.MinFrag();
+              MAX_FRAGMENT_NEW=acd.MaxFrag();
+              fragment=acd.Frag();
+          }
           // process fragment
           if (bufptr>=buflen) c=EOF;
           else c=(unsigned char)buf[bufptr++];
@@ -3016,8 +3520,7 @@ int Jidac::add() {
               || acd.TFFragment(sz)
               || (fragment<=22 && h<(1u<<(22-fragment)) && sz>=MIN_FRAGMENT_NEW))
             break;
-        }
-        acd.TFNext(sz);
+        }        
         assert(sz<=MAX_FRAGMENT_NEW);
         total_done+=sz;
         // 
@@ -3055,7 +3558,7 @@ int Jidac::add() {
             1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
         for (int i=0; i<256; ++i) {
           if (o1ct[o1[i]]<255) h1-=(sz*dt[o1ct[o1[i]]++])>>15;
-          if ((o1[i]==' '|| o1[i]==0x22) && (isalnum(i) || i==0x22 || i=='.' || i==',')) ++text1;
+          if ((o1[i]==' ') && (isalnum(i) || i=='.' || i==',')) ++text1;
           if (o1[i]=='\n' && (isalnum(i) || i==' ' || i=='\n' || i=='/' || i=='#' || i==9 || '}'|| '>')) ++text1; // more tests
           if (o1[i] && (i<9 || i==11 || i==12 || (i>=14 && i<=31) || i>=240))
             --text1;
@@ -3095,6 +3598,7 @@ int Jidac::add() {
         }
         // foce new block before and after special type
         newblock=acd.IsNewBlock(newblock, fsize, sb.size()>0);
+        newblock=acd.ForceNewBlock(newblock);
         if (sb.size()+sz+80+frags*4>=blocksize) newblock=true; // full?
         if (fi==vf.size()) newblock=true;  // last file?
         if (frags<1) newblock=false;  // block is empty?
@@ -3140,7 +3644,7 @@ int Jidac::add() {
           memcpy(o1prev+256*(ON-1), o1, 256);
         }
       }  // end if frag not matched or last block
-
+      acd.TFNext(sz);
       // Update HT and ptr list
       if (fi<vf.size()) {
         if (htptr==0) {
