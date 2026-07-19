@@ -2513,10 +2513,10 @@ class Reader{
             isEOF=c==EOF;
             return line;
         }
-        std::string const &ReadBlock(int size) {
+        std::string const &ReadBlock(uint32_t size) {
             block="";
             block.resize(size);
-            int len=0;
+            uint32_t len=0;
             int c=0;
             while (len<size) {
                c=getc();
@@ -2601,7 +2601,6 @@ std::string mimeToExt(std::string file) {
 class WarcFile {
     private:
         Reader file;
-        std::string outfile;
         std::vector<WarcRecord> records;
         ExtManager &extm;
     public:
@@ -2637,25 +2636,18 @@ class WarcFile {
             } else {
                 return false;
             }
-            int contentSize=0;
+            int64_t contentSize=0;
 
             for(auto j=0; j<record.fields.size(); j++) {
                 if (record.fields[j].id==CONTENT_LENGTH) {
-                    contentSize=std::stoi(record.fields[j].value);
+                    contentSize=std::stoll(record.fields[j].value);
                     break;
                 }
             }
-            // in list mode skip content reading and seek to next entry
-            if (doContent==true) {
-                std::string content=file.ReadBlock(contentSize);
-                record.content=content;
-                if (contentSize!=content.size()) {
-                   //printf("Content not same size %d %d\n", contentSize, content.size());
-                   return false;
-                }
-            } else {
                 record.pos=file.tell();
-                record.size=int64_t(contentSize);
+                record.size=contentSize;
+                const std::string empty;
+                if (contentSize>=empty.max_size()) return false;
                 std::string content=file.ReadBlock(contentSize);
                 //split mode
                 auto p=std::find(content.begin(), content.end(), '\n');
@@ -2698,7 +2690,7 @@ class WarcFile {
                    record.cpos= header.length()+4;
                    record.ext=ext;
                 }
-            }
+
             
             records.push_back(record);
             line=file.ReadLine();
