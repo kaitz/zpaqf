@@ -2378,9 +2378,9 @@ int GetExtensionFE(FETypes t) {
 }
     
 };
-// v0.2
+// Parser for WARC files v0.2
 namespace warcfile {
-using namespace libzpaq;
+
 static const char WCR=0x0d;
 static const char WLF=0x0a;
 
@@ -2658,7 +2658,7 @@ class WarcFile {
             record.pos=file.tell();
             record.size=contentSize;
             const std::string empty;
-            if (contentSize>=empty.max_size()) return false;
+            if (contentSize>=int64_t(empty.max_size())) return false;
             // Read whole content
             std::string content=file.ReadBlock(contentSize);
             auto p=std::find(content.begin(), content.end(), '\n');
