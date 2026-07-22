@@ -2448,11 +2448,13 @@ static const std::vector<field> WARC_FIELDS={
     {WARC_SEGMENT_ORIGIN_ID , "WARC-Segment-Origin-ID"},
     {WARC_SEGMENT_NUMBER , "WARC-Segment-Number"},
     {WARC_SEGMENT_TOTAL_LENGTH , "WARC-Segment-Total-Length"},
+    // Seems to be proposed fields, still used everywhere
     {WARC_PROTOCOL , "WARC-Protocol"},
     {WARC_CIPHER_SUITE , "WARC-Cipher-Suite"},
     {WARC_PAGE_ID , "WARC-Page-ID"},
     {WARC_JSON_METADATA , "WARC-JSON-Metadata"},
     {WARC_RESOURCE_TYPE , "WARC-Resource-Type"}
+    // Extend here if needed
 };
 
 int get_warc_field_id(std::string name) {
@@ -2494,8 +2496,7 @@ class Reader{
             fseeko(in, 0, SEEK_SET);
         };
         ~Reader() {
-             fseeko(in, curpos, SEEK_SET);
-             //printf("WARC restored pos: %d\n",curpos);
+             fseeko(in, curpos, SEEK_SET); // restore pos
         }
         std::string const &ReadLine() {
             line="";
@@ -2513,10 +2514,10 @@ class Reader{
             isEOF=c==EOF;
             return line;
         }
-        std::string const &ReadBlock(uint32_t size) {
+        std::string const &ReadBlock(int64_t size) {
             block="";
             block.resize(size);
-            uint32_t len=0;
+            int64_t len=0;
             int c=0;
             while (len<size) {
                c=getc();
@@ -2568,6 +2569,7 @@ std::string SplitString(std::string linef, char spilt, int i) {
     }else return "";
                     
 }
+// Convert mime type to file extension
 std::string mimeToExt(std::string file) {
     std::string ext="";
     std::transform(file.begin(), file.end(), file.begin(), [](unsigned char c){ return std::tolower(c); });
@@ -2606,7 +2608,11 @@ class WarcFile {
     public:
         WarcFile(FP in,ExtManager &extm) : file(in),extm(extm) { };
         ~WarcFile() { };
-        bool ReadRecord(bool doContent=true) {
+        // Read WARC records
+        // return false if last record or error
+        // Expected WARC header: WARC/1.0 or WARC/1.1
+        // When unknown WARC field is detected then parser exits
+        bool ReadRecord() {
             if (file.End()) {
                 return false;
             }
@@ -2615,6 +2621,7 @@ class WarcFile {
             line=file.ReadLine();
             char lastc=line.back();
             if (!line.empty()) line.erase(std::prev(line.end()));
+            // Parse WARC fields
             if (line=="WARC/1." && (lastc=='0' || lastc=='1')){
                 while (line=file.ReadLine(), line.size()>0 && file.End()==false) {
                     WarcField field;
@@ -2623,8 +2630,7 @@ class WarcFile {
                     std::move(line.begin(), p, std::back_inserter(fieldname));
                     int fieldID=get_warc_field_id(fieldname);
                     if (fieldID==-1) {
-                       //printf("Unexpected field %s\n", fieldname.c_str());
-                       //exit(1);
+                       printf("WARC: Unexpected field %s\n", fieldname.c_str());
                        return false;
                     }
                     field.id=fieldID;
@@ -2636,62 +2642,61 @@ class WarcFile {
             } else {
                 return false;
             }
+            // Get WARC content size
             int64_t contentSize=0;
-
             for(auto j=0; j<record.fields.size(); j++) {
                 if (record.fields[j].id==CONTENT_LENGTH) {
                     contentSize=std::stoll(record.fields[j].value);
                     break;
                 }
             }
-                record.pos=file.tell();
-                record.size=contentSize;
-                const std::string empty;
-                if (contentSize>=empty.max_size()) return false;
-                std::string content=file.ReadBlock(contentSize);
-                //split mode
+            record.pos=file.tell();
+            record.size=contentSize;
+            const std::string empty;
+            if (contentSize>=empty.max_size()) return false;
+            // Read whole content
+            std::string content=file.ReadBlock(contentSize);
+            auto p=std::find(content.begin(), content.end(), '\n');
+            std::string fieldname;
+            std::string contentfile;
+            std::move(content.begin(), p-1, std::back_inserter(fieldname));
+            // Parse HTTP header and get content start and end positions
+            if (fieldname.size()>1 && (fieldname.substr(0,12)=="HTTP/1.1 200")) {
                 auto p=std::find(content.begin(), content.end(), '\n');
-                std::string fieldname;
-                std::string contentfile;
-                std::move(content.begin(), p-1, std::back_inserter(fieldname));
-                
-                if (fieldname.size()>1 && (fieldname.substr(0,12)=="HTTP/1.1 200")) {
-                    auto p=std::find(content.begin(), content.end(), '\n');
-                    std::string lflf="\r\n\r\n";
-                    auto p1=std::search(content.begin(), content.end(), lflf.begin(), lflf.end());
-                    fieldname="";
-                    std::move(content.begin(), p1, std::back_inserter(fieldname));
-                    std::string header=fieldname;
-                    std::string del="\r\n";
-                    auto pos = fieldname.find(del);
-                    // Search for content type
-                    std::string ext="";
-                    while (1) {
-                        std::string linef= fieldname.substr(0, pos);
-                        std::string value;
-                        auto p=std::find(linef.begin(), linef.end(), ':');
-                        std::string fieldn="";
-                        const std::string contenttype="content-type";
-                        std::move(linef.begin(), p, std::back_inserter(fieldn));
-                        std::transform(fieldn.begin(), fieldn.end(), fieldn.begin(), [](unsigned char c){ return std::tolower(c); });
-                        int fieldID=fieldn==contenttype?1:0;
-                        p++; // ':'
-                        std::move(p, linef.end(), std::back_inserter(value));
-                        if (fieldID>0) {
-                            std::string app=SplitString(value,'/',0);
-                            std::string file=SplitString(value,'/',1);
-                            ext=mimeToExt(file);
-                            break;
-                        }
-                        if (pos==std::string::npos) break;
-                        fieldname.erase(0, pos + del.length());
-                        pos=fieldname.find(del);
+                std::string lflf="\r\n\r\n";
+                auto p1=std::search(content.begin(), content.end(), lflf.begin(), lflf.end());
+                fieldname="";
+                std::move(content.begin(), p1, std::back_inserter(fieldname));
+                std::string header=fieldname;
+                std::string del="\r\n";
+                auto pos = fieldname.find(del);
+                // Search for content type
+                std::string ext="";
+                while (1) {
+                    std::string linef= fieldname.substr(0, pos);
+                    std::string value;
+                    auto p=std::find(linef.begin(), linef.end(), ':');
+                    std::string fieldn="";
+                    const std::string contenttype="content-type";
+                    std::move(linef.begin(), p, std::back_inserter(fieldn));
+                    std::transform(fieldn.begin(), fieldn.end(), fieldn.begin(), [](unsigned char c){ return std::tolower(c); });
+                    int fieldID=fieldn==contenttype?1:0;
+                    p++; // ':'
+                    std::move(p, linef.end(), std::back_inserter(value));
+                    if (fieldID>0) {
+                        std::string app=SplitString(value,'/',0);
+                        std::string file=SplitString(value,'/',1);
+                        ext=mimeToExt(file);
+                        break;
                     }
-                   record.cpos= header.length()+4;
-                   record.ext=ext;
+                    if (pos==std::string::npos) break;
+                    fieldname.erase(0, pos + del.length());
+                    pos=fieldname.find(del);
                 }
-
-            
+               record.cpos=header.length()+4;
+               record.ext=ext;
+            }
+            // Add content
             records.push_back(record);
             line=file.ReadLine();
             if (file.LineType()!=LTYPE_CRLF) return false;//printf("Line type wrong\n");
@@ -2699,7 +2704,8 @@ class WarcFile {
             if (file.LineType()!=LTYPE_CRLF) return false;//printf("Line type wrong\n");
             return true;
         }
-
+        // Create list of files from response headers
+        // and convert mime types to file exentsions
         void ListWARC(std::list<contentlist> &content) {
             const int field=WARC_TARGET_URI;
             int64_t content_count=0;
@@ -2924,7 +2930,7 @@ void ACD::Parse(const int frags, const char *buf, const int bufptr, const int bu
     else if (ext==FE_WARC && buflen>1024 && fileFragment==0) {
         if (fileStart==false) {
             wfile=new WarcFile(in,extm);
-            while (wfile->ReadRecord(false));
+            while (wfile->ReadRecord());
             wfile->ListWARC(content);
             delete wfile;
             isTFF=true;
