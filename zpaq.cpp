@@ -2416,7 +2416,9 @@ enum WarcFields{
     WARC_CIPHER_SUITE,  // proposed ?
     WARC_PAGE_ID,       // proposed ?
     WARC_JSON_METADATA,  // proposed ?
-    WARC_RESOURCE_TYPE   // proposed ?
+    WARC_RESOURCE_TYPE,   // proposed ?
+    WARC_SCOOP_EXCHANGE_ID, // Scoop
+    WARC_SCOOP_EXCHANGE_DESCRIPTION // Scoop
 };
 
 struct field {
@@ -2425,46 +2427,49 @@ struct field {
 };
 
 static const std::vector<field> WARC_FIELDS={
-    {WARC_TYPE , "WARC-Type"},
-    {WARC_RECORD_ID , "WARC-Record-ID"},
-    {WARC_DATE , "WARC-Date"},
-    {CONTENT_LENGTH , "Content-Length"},
-    {CONTENT_TYPE , "Content-Type"},
-    {WARC_CONCURRENT_TO , "WARC-Concurrent-To"},
-    {WARC_BLOCK_DIGEST , "WARC-Block-Digest"},
-    {WARC_PAYLOAD_DIGEST , "WARC-Payload-Digest"},
-    {WARC_IP_ADDRESS , "WARC-IP-Address"},
-    {WARC_REFERS_TO , "WARC-Refers-To"},
-    {WARC_RESERVED1 , "WARC_RESERVED1"},
-    {WARC_REFERS_TO_TARGET_URI , "WARC-Refers-To-Target-URI"},
-    {WARC_REFERS_TO_DATE , "WARC-Refers-To-Date"},
-    {WARC_RESERVED2 , "WARC_RESERVED2"},
-    {WARC_TARGET_URI , "WARC-Target-URI"},
-    {WARC_TRUNCATED , "WARC-Truncated"},
-    {WARC_WARCINFO_ID , "WARC-Warcinfo-ID"},
-    {WARC_FILENAME , "WARC-Filename"},
-    {WARC_PROFILE , "WARC-Profile"},
-    {WARC_IDENTIFIED_PAYLOAD_TYPE , "WARC-Identified-Payload-Type"},
-    {WARC_SEGMENT_ORIGIN_ID , "WARC-Segment-Origin-ID"},
-    {WARC_SEGMENT_NUMBER , "WARC-Segment-Number"},
-    {WARC_SEGMENT_TOTAL_LENGTH , "WARC-Segment-Total-Length"},
+    {WARC_TYPE, "WARC-Type"},
+    {WARC_RECORD_ID, "WARC-Record-ID"},
+    {WARC_DATE, "WARC-Date"},
+    {CONTENT_LENGTH, "Content-Length"},
+    {CONTENT_TYPE, "Content-Type"},
+    {WARC_CONCURRENT_TO, "WARC-Concurrent-To"},
+    {WARC_BLOCK_DIGEST, "WARC-Block-Digest"},
+    {WARC_PAYLOAD_DIGEST, "WARC-Payload-Digest"},
+    {WARC_IP_ADDRESS, "WARC-IP-Address"},
+    {WARC_REFERS_TO, "WARC-Refers-To"},
+    {WARC_RESERVED1, "WARC_RESERVED1"},
+    {WARC_REFERS_TO_TARGET_URI, "WARC-Refers-To-Target-URI"},
+    {WARC_REFERS_TO_DATE, "WARC-Refers-To-Date"},
+    {WARC_RESERVED2, "WARC_RESERVED2"},
+    {WARC_TARGET_URI, "WARC-Target-URI"},
+    {WARC_TRUNCATED, "WARC-Truncated"},
+    {WARC_WARCINFO_ID, "WARC-Warcinfo-ID"},
+    {WARC_FILENAME, "WARC-Filename"},
+    {WARC_PROFILE, "WARC-Profile"},
+    {WARC_IDENTIFIED_PAYLOAD_TYPE, "WARC-Identified-Payload-Type"},
+    {WARC_SEGMENT_ORIGIN_ID, "WARC-Segment-Origin-ID"},
+    {WARC_SEGMENT_NUMBER, "WARC-Segment-Number"},
+    {WARC_SEGMENT_TOTAL_LENGTH, "WARC-Segment-Total-Length"},
     // Seems to be proposed fields, still used everywhere
-    {WARC_PROTOCOL , "WARC-Protocol"},
-    {WARC_CIPHER_SUITE , "WARC-Cipher-Suite"},
-    {WARC_PAGE_ID , "WARC-Page-ID"},
-    {WARC_JSON_METADATA , "WARC-JSON-Metadata"},
-    {WARC_RESOURCE_TYPE , "WARC-Resource-Type"}
+    {WARC_PROTOCOL, "WARC-Protocol"},
+    {WARC_CIPHER_SUITE, "WARC-Cipher-Suite"},
+    {WARC_PAGE_ID, "WARC-Page-ID"},
+    {WARC_JSON_METADATA, "WARC-JSON-Metadata"},
+    {WARC_RESOURCE_TYPE, "WARC-Resource-Type"},
+    // https://github.com/harvard-lil/scoop
+    {WARC_SCOOP_EXCHANGE_ID, "Scoop-Exchange-ID"},
+    {WARC_SCOOP_EXCHANGE_DESCRIPTION, "Scoop-Exchange-Description"},
     // Extend here if needed
 };
 
 int get_warc_field_id(std::string name) {
-    for(int i=0; i < WARC_FIELDS.size(); i++) {
+    for(unsigned int i=0; i<WARC_FIELDS.size(); i++) {
         if (WARC_FIELDS[i].value==name) return WARC_FIELDS[i].id;
     }
     return -1;
 }
 std::string get_warc_field_name(int id) {
-    for(int i=0; i < WARC_FIELDS.size(); i++) {
+    for(unsigned int i=0; i<WARC_FIELDS.size(); i++) {
         if (WARC_FIELDS[i].id==id) return WARC_FIELDS[i].value;
     }
     return "";
@@ -2644,7 +2649,7 @@ class WarcFile {
             }
             // Get WARC content size
             int64_t contentSize=0;
-            for(auto j=0; j<record.fields.size(); j++) {
+            for(unsigned int j=0; j<record.fields.size(); j++) {
                 if (record.fields[j].id==CONTENT_LENGTH) {
                     contentSize=std::stoll(record.fields[j].value);
                     break;
@@ -2710,13 +2715,13 @@ class WarcFile {
             const int field=WARC_TARGET_URI;
             int64_t content_count=0;
             int64_t last_content_end=0;
-            for(auto i=0; i <records.size(); i++) {
+            for(unsigned int i=0; i<records.size(); i++) {
                 int fid=-1;
                 int tid=-1;
                 std::string value="";
                 std::string ext="";
                 int64_t pos=0,size=0,cpos=0;
-                for(auto j=0; j<records[i].fields.size(); j++) { 
+                for(unsigned int j=0; j<records[i].fields.size(); j++) { 
                     if (fid==-1 && records[i].fields[j].id==WARC_TYPE && records[i].fields[j].value==" response") { // webserver response
                         fid=records[i].fields[j].id; 
                     } if (tid==-1 && records[i].fields[j].id==field) {
