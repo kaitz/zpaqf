@@ -2539,6 +2539,7 @@ class Reader{
         bool End() { return isEOF; }
         void close() {fclose(in); }
         int64_t tell() {return filepos; }
+        void seekf(int64_t next) {fseeko(in, next, SEEK_SET); filepos=next; bufptr=buflen=0; }
 };
 
 class WarcField {
@@ -2659,13 +2660,16 @@ class WarcFile {
             record.size=contentSize;
             const std::string empty;
             if (contentSize>=int64_t(empty.max_size())) return false;
-            // Read whole content
-            std::string content=file.ReadBlock(contentSize);
+            // Read a max of 64k of content, seek the rest if any
+            std::string content=file.ReadBlock(std::min(int64_t(1<<16),contentSize));
+            int64_t rem=contentSize-std::min(int64_t(1<<16),contentSize);
+            if (rem) file.seekf(record.pos+contentSize);
+
             auto p=std::find(content.begin(), content.end(), '\n');
             std::string fieldname;
             std::string contentfile;
             std::move(content.begin(), p-1, std::back_inserter(fieldname));
-            // Parse HTTP header and get content start and end positions
+            // Parse the HTTP header and get the start and end positions of the content
             if (fieldname.size()>1 && (fieldname.substr(0,12)=="HTTP/1.1 200")) {
                 auto p=std::find(content.begin(), content.end(), '\n');
                 std::string lflf="\r\n\r\n";
@@ -2690,8 +2694,8 @@ class WarcFile {
                     std::move(p, linef.end(), std::back_inserter(value));
                     if (fieldID>0) {
                         std::string app=SplitString(value,'/',0);
-                        std::string file=SplitString(value,'/',1);
-                        ext=mimeToExt(file);
+                        std::string filem=SplitString(value,'/',1);
+                        ext=mimeToExt(filem);
                         break;
                     }
                     if (pos==std::string::npos) break;
