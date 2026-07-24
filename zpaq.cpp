@@ -2666,23 +2666,27 @@ class WarcFile {
             if (rem) file.seekf(record.pos+contentSize);
 
             auto p=std::find(content.begin(), content.end(), '\n');
+            if (p==content.end()) return false;
             std::string fieldname;
             std::string contentfile;
             std::move(content.begin(), p-1, std::back_inserter(fieldname));
             // Parse the HTTP header and get the start and end positions of the content
             if (fieldname.size()>1 && (fieldname.substr(0,12)=="HTTP/1.1 200")) {
                 auto p=std::find(content.begin(), content.end(), '\n');
+                if (p==content.end()) return false;
                 std::string lflf="\r\n\r\n";
                 auto p1=std::search(content.begin(), content.end(), lflf.begin(), lflf.end());
+                if (p1==content.end()) return false;
                 fieldname="";
                 std::move(content.begin(), p1, std::back_inserter(fieldname));
                 std::string header=fieldname;
                 std::string del="\r\n";
                 auto pos = fieldname.find(del);
+                if (pos==std::string::npos) return false;
                 // Search for content type
                 std::string ext="";
                 while (1) {
-                    std::string linef= fieldname.substr(0, pos);
+                    std::string linef=fieldname.substr(0, pos);
                     std::string value;
                     auto p=std::find(linef.begin(), linef.end(), ':');
                     std::string fieldn="";
