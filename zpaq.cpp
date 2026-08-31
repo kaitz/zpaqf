@@ -2810,6 +2810,401 @@ class WarcFile {
 };
 }
 
+namespace isofile {
+    using namespace reader;
+
+// IS9960 parser
+
+// Expected sector size 2048
+// File starts with 16 sectors (32 kb) of arbitrary data (boot, etc), most times it contains \0 (non-usb iso)
+// This is followed by Volume Descriptors, each 1 sector.
+//  First byte in this sector describes:
+//  0     Boot Record
+//  1     Primary Volume Descriptor
+//  2     Supplementary Volume Descriptor
+//  3     Volume Partition Descriptor
+//  4-254 Reserved
+//  255   Volume Descriptor Set Terminator
+//
+// We need to extract root directory location from Primary Volume Descriptor and
+// ignore one in Supplementary Volume Descriptor if present.
+// After that we can start extracting file names and their location inside the ISO image.
+// We collect info about files and all sub-directorys. Parsed sub-directory is removed.
+// If there are no more directories then we are done.
+// Rock Ridge in directory entry is ignored (contains long file names)
+// Extensions SUSP is ignored
+//
+// Overall we need file start and end location inside iso file.
+
+typedef struct {uint8_t le[2];}        luint16;
+typedef struct {uint8_t be[2];}        buint16;
+typedef struct {uint8_t le[2], be[2];} duint16;
+typedef struct {uint8_t le[4];}        luint32;
+typedef struct {uint8_t be[4];}        buint32;
+typedef struct {uint8_t le[4], be[4];} duint32;
+
+// Directory entry
+struct i9660_dir {
+    uint8_t   length;
+    uint8_t   xattr_length;
+    duint32   sector;
+    duint32   size;
+    char      time[7];
+    uint8_t   flags;
+    uint8_t   unit_size;
+    uint8_t   gap_size;
+    duint16   vol_seq_number;
+    uint8_t   name_len;
+    char      name; // [name_len]
+};
+// Volume Descriptor
+struct i9660_vd {
+    uint8_t   type;
+    char      magic[5];
+    uint8_t   version;
+    char      pad0[1];
+    char      system_id[32];
+    char      volume_id[32];
+    char      pad1[8];
+    duint32   volume_space_size;
+    char      pad2[32];
+    duint16   volume_set_size;
+    duint16   volume_seq_number;
+    duint16   logical_block_size;
+    duint32   path_table_size;
+    luint32   path_table_le;
+    luint32   path_table_opt_le;
+    buint32   path_table_be;
+    buint32   path_table_opt_be;
+    union {
+     i9660_dir   root_dir;
+     char        pad3[34];
+    };
+    char      volume_set_id[128];
+    char      data_preparer_id[128];
+    char      app_id[128];
+    char      copyright_file[38];
+    char      abstract_file[36];
+    char      bibliography_file[37];
+    char      volume_created[17];
+    char      volume_modified[17];
+    char      volume_expires[17];
+    char      volume_effective[17];
+    uint8_t   file_structure_version;
+    char      pad4[1];
+    char      app_reserved[512];
+    char      reserved[653];
+};
+
+struct ISOfile {
+    uint64_t start;
+    uint64_t size;
+    FETypes ext;
+};
+
+typedef enum {NONE=0,START,INFO} DetectState; 
+
+class ISO9960Parser {
+private:
+    Reader file;
+    ExtManager &extm;
+    DetectState state;
+    uint64_t iso;
+    uint8_t sector[2048];
+    uint32_t sectorpos;
+    uint32_t sectcount;
+    uint32_t rootdir,rootdirsup;
+    std::set<uint32_t> sectorl;
+    std::vector<ISOfile> isoF;
+    uint64_t isoFiles;
+    bool volterm;
+    uint32_t buf0, buf1;
+    uint64_t i;
+    std::list<int> filesectorlist;
+    uint64_t jstart, jend, inSize, inpos;
+public:    
+    ISO9960Parser(FP in,ExtManager &extm, std::list<contentlist> &content);
+    ~ISO9960Parser();
+    bool Parse(const char *data, uint64_t len, uint64_t pos, bool last, std::list<contentlist> &content,int64_t startpos);
+    void Reset();
+};
+
+ISO9960Parser::ISO9960Parser(FP in, ExtManager &extm, std::list<contentlist> &content):file(in),extm(extm),inpos(0) {
+    Reset();
+    std::string line="";
+    const size_t BLOCK=0x10000;
+    size_t pos=0;
+    bool last=false;
+    while (last==false) {
+        line=file.ReadBlock(BLOCK);
+        pos+=line.size();
+        last=line.size()!=BLOCK;
+        bool pstate=Parse(&line[0], line.size(), pos, last, content, file.curpos);
+        if (file.End() || pstate==false) {
+            break;
+        }
+    }
+}
+
+ISO9960Parser::~ISO9960Parser() {    
+}
+
+// loop over input block byte by byte and report state
+bool ISO9960Parser::Parse(const char *data, uint64_t len, uint64_t pos, bool last, std::list<contentlist> &content,int64_t startpos) {
+    // To small? 
+    if (pos==0 && len<(25*2048)) return false; // min 25 sectors
+    // Are we in new data block, if so reset inSize and restart
+    if (inpos!=pos) {
+        inSize=0,inpos=pos;
+        i=pos;
+    }
+    
+    while (inSize<len) {
+        buf1=(buf1<<8)|(buf0>>24);
+        const uint8_t c=data[inSize];
+        buf0=(buf0<<8)+c;
+
+        if (state==NONE && i>0x8000 && (buf1&0xffffff)==0x014344 && buf0==0x30303101) { 
+            state=INFO;
+            jstart=iso=i-(0x8000+6);
+            sectcount=16;
+            if (inSize>=7) for (size_t j=7; j>0; j--) sector[7-j]=data[inSize+1-j];
+            sectorpos=7;
+        }else if (state==INFO && sectorpos<2048) {
+            sector[sectorpos++]=c;
+            
+            if (state==INFO && sectorpos==2048 && volterm==false) {
+                i9660_vd vd;
+                memcpy(&vd, sector, sizeof(i9660_vd));
+                if (vd.type==1 && rootdir==0) {
+                    // Primary Volume Descriptor
+                    //printf("Primary Volume Descriptor, sector %d \n",sectcount);
+                    uint16_t lbs=vd.logical_block_size.le[0]+vd.logical_block_size.le[1]*256;
+                    //printf("Sector size %d\n",lbs); //2048
+                    uint32_t rts=vd.root_dir.sector.le[0]+(vd.root_dir.sector.le[1]<<8)+(vd.root_dir.sector.le[3]<<16)+(vd.root_dir.sector.le[3]<<24);
+                    //printf("Root dir LBA %d\n",rts);
+                    //uint32_t &rtss=(uint32_t&)vd.root_dir.size.le[0];
+                    //printf("Root size %d\n",rtss);
+                    rootdir=rts;
+                    isoFiles=0;
+                    if (lbs!=2048 || last==true) sectcount=sectorpos=rootdir=rootdirsup=0,state=NONE;
+                } else if (vd.type==2 && rootdirsup==0) {
+                    // Supplementary Volume Descriptor
+                    //printf("Supplementary Volume Descriptor, sector %d \n",sectcount);
+                    uint16_t lbs=vd.logical_block_size.le[0]+vd.logical_block_size.le[1]*256;
+                    //printf("Sector size %d\n",lbs); //2048
+                    //uint32_t &rts=(uint32_t&)vd.root_dir.sector.le[0];
+                    uint32_t rts=vd.root_dir.sector.le[0]+(vd.root_dir.sector.le[1]<<8)+(vd.root_dir.sector.le[3]<<16)+(vd.root_dir.sector.le[3]<<24);
+                    //printf("Root dir LBA %d\n",rts);
+                    //uint32_t &rtss=(uint32_t&)vd.root_dir.size.le[0];
+                    //printf("Root size %d\n",rtss);
+                    rootdirsup=rts;
+                    isoFiles=0;
+                    if (lbs!=2048 || last==true) sectcount=sectorpos=rootdir=rootdirsup=0,state=NONE;
+                } else if (vd.type==1 || vd.type==2 || vd.type==3 || vd.type==0 || vd.type==255) {
+                    if (vd.type==255) volterm=true;
+                } else {
+                    sectcount=sectorpos=rootdir=rootdirsup=0,state=NONE;
+                }
+                sectorpos%=2048;
+                sectcount++;
+            } else if (state==INFO && sectorpos==2048 && sectcount>=rootdir && sectcount!=rootdirsup) {
+                int dirlenght=0;
+                bool wrongs=false; // is wrong sector?
+                // Ignore Supplementary root dir
+                if (sectorl.size()>0 && rootdirsup) {
+                    std::set<uint32_t>::iterator pos;
+                    pos=sectorl.find(sectcount);
+                    if (pos==sectorl.end() && sectcount>=rootdirsup) {
+                        wrongs=true;
+                    } else {
+                        sectorl.erase(sectcount);
+                    }
+                }
+                // ISO9660 Extensions - SUSP 
+                //CE: Continuation area
+                //PD: Padding field
+                //SP: Sharing protocol indicator
+                //ST: Sharing protocol terminator
+                //ER: Extensions reference
+                //ES: Extension selector
+                // ignore sectors if SUSP
+                // maybe ignere if >255 ?
+                uint16_t rr=sector[0]+sector[1]*256;
+                if (rr==0x4543 || rr== 0x4450 || rr== 0x5053 || rr== 0x5453 || rr== 0x5245 || rr== 0x5345) wrongs=true;
+                if (wrongs==false) {
+                    do {
+                        i9660_dir dent;
+                        memcpy(&dent,&sector[dirlenght],sizeof(i9660_dir));
+                        uint32_t dent_sector=dent.sector.le[0]+(dent.sector.le[1]<<8)+(dent.sector.le[2]<<16)+(dent.sector.le[3]<<24);
+                        uint32_t dent_size=dent.size.le[0]+(dent.size.le[1]<<8)+(dent.size.le[2]<<16)+(dent.size.le[3]<<24);
+                        if (dent.length==0 || dent_sector==0) {
+                            dirlenght+=12+sizeof(i9660_dir);
+                            // Spans multile sectors?
+                            if (dirlenght>=2048) sectorl.insert(sectcount+1);
+                            break;
+                        } 
+                        
+                        // Add files
+                        if ((dent.flags&2)!=2 && dent_size>8 && dent.xattr_length==0) {
+                            // Process files with lenght >8 and ignore any file with xattr_length
+                            // Get file name, it may end with ;1, if so remove it. If '.' is left then also remove
+                            uint32_t nlen=dent.name_len;
+                            std::string fname="";
+                            char *name=(char*)&dent.name;
+                            for (uint32_t j=0; j<nlen; j++) fname+=name[j];
+                            //printf("%d %d %s\n",dent_sector,(uint32_t&)dent.size.le[0],fname.c_str());
+                            if (fname.size()>3 && fname.substr(fname.size()-2,2)==";1") fname.pop_back(),fname.pop_back();
+                            if (fname.size()>2 && fname.substr(fname.size()-1,1)==".") fname.pop_back();
+                            ISOfile tf;
+                            tf.start=dent_sector;
+                            // look for hardlinked files or files that point to same sector and if found then exclude from file list
+                            std::list<int>::iterator pos=std::find(filesectorlist.begin(), filesectorlist.end(), tf.start);
+                            filesectorlist.push_back(tf.start);
+                            if(pos==filesectorlist.end()) {
+                                tf.start=tf.start*2048;
+                                tf.size=dent_size;
+                                //ParserType etype=GetTypeFromExt(fname);
+                                //tf.p=etype;
+                                std::string ext=fname;
+                                //std::string fext="";
+                                std::string::size_type dotp=ext.rfind('.');
+                                if(dotp!=std::string::npos) {
+                                    ext=ext.substr(dotp);
+                                    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+                                }
+                                int a=extm.GetExtension(ext);
+                                tf.ext=FE_NONE;
+                                if (a!=-1) {
+                                    tf.ext=extm.ExtType(a);
+                                }
+                                isoF.push_back(tf);
+                                isoFiles++;
+                            }
+                        }
+                        /*
+                        int32_t nlen=dent.name_len;
+                        std::string fname="";
+                        char *name=(char*)&dent.name;
+                        for (int j=0; j<nlen; j++) fname+=name[j];
+                        if ((dent.flags&2)==2)    
+                        printf("%s %d %d %d %s\n",(dent.flags&2)!=2?"F":"D",dent.length,dent_sector,(uint32_t&)dent.size.le[0],fname.c_str());
+                        */
+                        // Collect info about directorys
+                        if ((dent.flags&2)==2 && dent.name!=1&& dent.name!=0 && sectcount!=dent_sector && dent.xattr_length==0) {
+                            // add subdir
+                            sectorl.insert(dent_sector);
+                        } else if ((dent.flags&2)==2 && rootdirsup==0) {
+                            // remove subdir
+                            std::set<uint32_t>::iterator pos;
+                            uint32_t elf=dent_sector;
+                            // Is current sector subdir is same then remove
+                            pos=sectorl.find(elf);
+                            if (pos!=sectorl.end()) {
+                                sectorl.erase(elf);
+                            }
+                        }
+                        dirlenght=dirlenght+dent.length;
+                        if (dent.length==0) dirlenght=0;
+                    } while (dirlenght);
+                    // To be sure we remove current sector from dir list.
+                    std::set<uint32_t>::iterator pos;
+                    pos=sectorl.find(sectcount);
+                    if (pos!=sectorl.end()) {
+                        sectorl.erase(sectcount);
+                    }
+                    //printf(" Dirs: %d, files: %d\n",sectorl.size(),isoF.size());
+                }
+                if (state==INFO) jend=i;
+                if (sectorl.size()==0) {
+                    jend=0;
+                    // sort
+                    // file sectors my be out of order
+                    int n=isoF.size();
+                    printf("ISO total files: %d\n",n);
+                    std::sort(isoF.begin(), isoF.end(), [](const ISOfile &a, const ISOfile &b) {
+                        return (a.start < b.start);
+                    });
+                    /*for (int i=0; i<isoF.size(); i++) {
+                            //if ((isoF[i+1].start+isoF[i+1].size)>isoF[i+1].start){
+                                printf("Bad size %d %d %d\n",i,isoF[i].start,isoF[i].size);
+                        // }
+                    }*/
+                    // recursive mode, report all iso file ranges
+                    // file extension based type parser set in info
+                    while (isoFiles) {
+                        
+                        ISOfile isofile=isoF[isoF.size()-isoFiles];
+                        jstart=isofile.start;//-(relAdd-iso);
+                        
+                        uint64_t oldend=jend+startpos;
+                        //if (startpos) printf("%d\n",startpos);
+                        
+                        contentlist cl;
+                        cl.ext=FE_NONE;
+                        jend=jstart+isofile.size-startpos;
+                        //if (startpos) printf("%d %d\n",oldend,jstart);
+                        
+                        int gaps=0;
+                        if (oldend<jstart) {
+                            cl.size=gaps=jstart-oldend;//,
+                            //printf("Gap size %d\n",jstart-oldend);
+                            
+                            /*if (cl.size>511) {
+                int parts=0;
+                parts=cl.size%512;//printf("Gap size %d\n",cl.size);
+                int count=cl.size/512;
+                cl.size=parts;
+                    content.push_back(cl);
+                //if (count){
+                    while (count--) {
+                    cl.size=512;
+                    content.push_back(cl);
+                    } 
+                //} 
+            }
+            else*/
+                            content.push_back(cl);
+                        }
+                        startpos=0;
+                        //printf("File nr %d start %d end %d size %d\n",isoF.size()-isoFiles,jstart,jend,isofile.size);
+                        cl.size=isofile.size;
+                        cl.ext=isofile.ext;
+                        content.push_back(cl);
+                        isoFiles--;
+                        if (isoFiles==0) isoF.clear();
+                    }
+                    return false;        
+                }
+                sectorpos=0;
+                sectcount++;
+            } else if (state==INFO && sectorpos==2048) {
+                sectorpos%=2048;
+                sectcount++;
+            }
+        }
+
+        inSize++;
+        i++;
+    }
+
+    if (state==INFO) {jend=i+1; return true;}
+    // Are we still reading data for our type
+    if (state!=NONE)
+    return true;
+    else return false;
+}
+
+void ISO9960Parser::Reset() {
+    state=NONE,jstart=jend=buf0=buf1=0;
+    iso=0,sectcount=0,rootdir=0,rootdirsup=0;
+    isoFiles=0; 
+    isoF.clear();
+    i=inSize=0;
+    volterm=false;
+}
+}
+
 namespace zipfile {
     using namespace reader;
     using namespace reader;
@@ -2972,6 +3367,7 @@ namespace zipfile {
 }
 
 using namespace warcfile;
+using namespace isofile;
 using namespace zipfile;
 
 struct TAR_header{
@@ -3021,6 +3417,7 @@ private:
   const int BUFSIZE;
   const unsigned blocksize;
   WarcFile *wfile;
+  ISO9960Parser *isofile;
   std::list<contentlist> content;
   bool isTFF;
   ExtManager extm;
@@ -3146,6 +3543,27 @@ void ACD::Parse(const int frags, const char *buf, const int bufptr, const int bu
             delete wfile;
             isTFF=true;
             //printf("WARC large fragments %d\n",content.size());
+        }
+        fileStart=true;
+        if (content.size()>0) {
+            isNewBlock=isNewBlockNext;
+            isNewBlockNext=false;
+            contentlist cl=content.front();
+            fileFragment=cl.size;
+            content.pop_front();
+            int a=extm.GetExtensionFE(cl.ext);
+            minFragment=extm.ExtMin(a); 
+            maxFragment=extm.ExtMax(a);
+            f=extm.ExtFrag(a);
+            isNewFragment=true;
+        } else ext=FE_NONE,isTFF=false;
+   }
+   else if (ext==FE_ISO9960 && buflen>1024 && fileFragment==0) {
+        if (fileStart==false) {
+            isofile=new ISO9960Parser(in,extm,content);
+            delete isofile;
+            isTFF=true;
+            //printf("ISO files & fragments %d\n",content.size());
         }
         fileStart=true;
         if (content.size()>0) {
