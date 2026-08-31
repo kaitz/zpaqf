@@ -1,6 +1,6 @@
 // zpaq.cpp - Journaling incremental deduplicating archiver
 
-#define ZPAQ_VERSION "7.15.10f"
+#define ZPAQ_VERSION "7.15.11f"
 /*
   This software is provided as-is, with no warranty.
   I, Matt Mahoney, release this software into
@@ -72,6 +72,7 @@ Possible options:
 #include <algorithm>
 #include <stdexcept>
 #include <fcntl.h>
+#include <set>
 
 #ifndef DEBUG
 #define NDEBUG 1
@@ -2264,7 +2265,16 @@ enum FETypes {
     FE_XML,
     FE_BIN,
     FE_TXT,
-    FE_MPEG
+    FE_MPEG,
+    FE_ISO9960,
+    FE_GZ,
+    FE_RPM,
+    FE_VSIX,
+    FE_DOCX,
+    FE_XLSX,
+    FE_ODS,
+    FE_ODT,
+    FE_JAR
 };
 
 struct contentlist{
@@ -2278,7 +2288,7 @@ struct Extension {
     const int       mif; // new mid fragment size
 };
 
-static const int ExtCapacity=18+15+1+1;
+static const int ExtCapacity=44;
 
 static const Extension extension[ExtCapacity]={
     {"", FE_NONE,0},
@@ -2313,7 +2323,17 @@ static const Extension extension[ExtCapacity]={
     {".xml",FE_XML,0},
     {".bin",FE_BIN,0},
     {".txt",FE_TXT,0},
-    {".mpeg",FE_MPEG,11}
+    {".mpeg",FE_MPEG,11},
+    {".iso",FE_ISO9960,0},
+    {".gz",FE_GZ,0},
+    {".rpm",FE_RPM,0},
+    {".vsix",FE_VSIX,0},
+    {".docx",FE_DOCX,0},
+    {".xlsx",FE_XLSX,0},
+    {".ods",FE_ODS,0},
+    {".odt",FE_ODT,0},
+    {".jar",FE_JAR,0}
+    
 };
 
 
@@ -2378,15 +2398,95 @@ int GetExtensionFE(FETypes t) {
 }
     
 };
+
+
+namespace reader {
+    enum EnumLineTypes {
+    LTYPE_NONE,LTYPE_LF,LTYPE_CRLF
+    };
+    static const char WCR=0x0d;
+    static const char WLF=0x0a;
+class Reader {
+    private:
+        FP in;
+        std::string line;
+        EnumLineTypes linetype;
+        std::string block;
+        bool isEOF;
+        
+        const int BUFSIZE;  // input buffer 64k
+        libzpaq::Array<char> buf;
+        int bufptr, buflen;
+        int64_t filepos;
+        int64_t filelen;
+        int getc() {
+            int c=0;
+            if (bufptr>=buflen) bufptr=0, buflen=fread(&buf[0], 1, BUFSIZE, in);
+            if (bufptr>=buflen) c=EOF;
+            else c=(unsigned char)buf[bufptr++],filepos++;
+            return c;
+        }
+        
+    public:
+        int64_t curpos;
+        explicit Reader(FP in): in(in),isEOF(false),BUFSIZE(4096*16),buf(BUFSIZE),bufptr(0), buflen(0),filepos(0) {
+            curpos=ftello(in);
+            fseeko(in, 0, SEEK_END);
+            filelen=ftello(in);
+            fseeko(in, 0, SEEK_SET);
+        };
+        ~Reader() {
+             restorepos();
+        }
+        std::string const &ReadLine() {
+            line="";
+            linetype=LTYPE_NONE;
+            int c=0;
+            while ((c=getc())!=EOF) {
+                line=line+char(c);
+                if (c==WCR) line.pop_back(),linetype=LTYPE_CRLF;
+                else if (c==WLF) {
+                    if (linetype!=LTYPE_CRLF) linetype=LTYPE_LF;
+                    line.pop_back();
+                    break;
+                }
+            }
+            isEOF=c==EOF;
+            return line;
+        }
+        std::string const &ReadBlock(int64_t size) {
+            block="";
+            block.resize(size);
+            int64_t len=0;
+            int c=0;
+            while (len<size) {
+               c=getc();
+               if (c==EOF) break;
+               block[len]=char(c);
+               len++;
+            }
+            if (len!=size) isEOF=true;
+            block.resize(len);
+            return block;
+        }
+        std::string const &LastLine() { return line;}
+        EnumLineTypes const LineType() { return linetype;}
+        bool End() { return isEOF; }
+        void close() {fclose(in); }
+        int64_t tell() {return filepos; }
+        FP fp() {return in;}
+        int64_t flen() {return filelen; }
+        void seekf(int64_t next) {fseeko(in, next, SEEK_SET); filepos=next; bufptr=buflen=0; }
+        void restorepos(){
+            fseeko(in, curpos, SEEK_SET); // restore pos
+             //printf("restore pos %d\n",curpos);
+             filepos=curpos;
+        }
+};
+}
 // Parser for WARC files v0.2
 namespace warcfile {
-
-static const char WCR=0x0d;
-static const char WLF=0x0a;
-
-enum EnumLineTypes {
-    LTYPE_NONE,LTYPE_LF,LTYPE_CRLF
-};
+    using namespace reader;
 
 enum WarcFields{
     WARC_TYPE,
@@ -2475,72 +2575,6 @@ std::string get_warc_field_name(int id) {
     return "";
 }
 
-class Reader{
-    private:
-        FP in;
-        std::string line;
-        EnumLineTypes linetype;
-        std::string block;
-        bool isEOF;
-        int64_t curpos;
-        const int BUFSIZE;  // input buffer 64k
-        libzpaq::Array<char> buf;
-        int bufptr, buflen;
-        int64_t filepos;
-        int getc() {
-            int c=0;
-            if (bufptr>=buflen) bufptr=0, buflen=fread(&buf[0], 1, BUFSIZE, in);
-            if (bufptr>=buflen) c=EOF;
-            else c=(unsigned char)buf[bufptr++],filepos++;
-            return c;
-        }
-        
-    public:
-        explicit Reader(FP in): in(in),isEOF(false),BUFSIZE(4096*16),buf(BUFSIZE),bufptr(0), buflen(0),filepos(0) {
-            curpos=ftello(in);
-            fseeko(in, 0, SEEK_SET);
-        };
-        ~Reader() {
-             fseeko(in, curpos, SEEK_SET); // restore pos
-        }
-        std::string const &ReadLine() {
-            line="";
-            linetype=LTYPE_NONE;
-            int c=0;
-            while ((c=getc())!=EOF) {
-                line=line+char(c);
-                if (c==WCR) line.pop_back(),linetype=LTYPE_CRLF;
-                else if (c==WLF) {
-                    if (linetype!=LTYPE_CRLF) linetype=LTYPE_LF;
-                    line.pop_back();
-                    break;
-                }
-            }
-            isEOF=c==EOF;
-            return line;
-        }
-        std::string const &ReadBlock(int64_t size) {
-            block="";
-            block.resize(size);
-            int64_t len=0;
-            int c=0;
-            while (len<size) {
-               c=getc();
-               if (c==EOF) break;
-               block[len]=char(c);
-               len++;
-            }
-            if (len!=size) isEOF=true;
-            block.resize(len);
-            return block;
-        }
-        std::string const &LastLine() { return line;}
-        EnumLineTypes const LineType() { return linetype;}
-        bool End() { return isEOF; }
-        void close() {fclose(in); }
-        int64_t tell() {return filepos; }
-        void seekf(int64_t next) {fseeko(in, next, SEEK_SET); filepos=next; bufptr=buflen=0; }
-};
 
 class WarcField {
     public:
@@ -2775,7 +2809,170 @@ class WarcFile {
         }
 };
 }
+
+namespace zipfile {
+    using namespace reader;
+    using namespace reader;
+    #define ZIP_SIGNATURE 0x04034b50
+    #define CENTRAL_DIRECTORY 0x06054b50
+    #define CDE_SIGNATURE 0x02014b50
+    #pragma pack(push, 1)
+    struct ZipEOCD{
+        uint32_t signature;
+        uint16_t nodisk;
+        uint16_t dcdstart;
+        uint16_t ncdrecords;
+        uint16_t tcdrecords;
+        uint32_t sizeCD;
+        uint32_t offset;
+        uint16_t comlen;
+    };
+    struct ZipLOC {
+        uint32_t signature;
+        uint16_t version;
+        uint16_t flags;
+        uint16_t compression;
+        uint16_t modtime;
+        uint16_t moddate;
+        uint32_t crs32;
+        uint32_t csize;
+        uint32_t usize;
+        uint16_t fnlen;
+        uint16_t eflen;
+    };
+    struct ZipCDFH {
+        uint32_t signature;
+        uint16_t version;
+        uint16_t version_needed;
+        uint16_t flags;
+        uint16_t compression_method;
+        uint16_t last_mod_file_time;
+        uint16_t last_mod_file_date;
+        uint32_t crc_32;
+        uint32_t compressed_size;
+        uint32_t uncompressed_size;
+        uint16_t file_name_length;
+        uint16_t extra_field_length;
+        uint16_t file_comment_length;
+        uint16_t disk_number;
+        uint16_t internal_file_attributes;
+        uint32_t external_file_attributes;
+        uint32_t local_file_header_offset;
+    };
+    #pragma pack(pop)
+
+    class ZIPParser {
+    private:
+        std::vector<int> hdr_offsets;
+        std::vector<int> cmp_size;
+        char *hdr_mem;
+        Reader file;
+        ExtManager &extm;
+    public:
+        ZIPParser(FP in, ExtManager &extm, std::list<contentlist> &content): hdr_mem(nullptr),file(in),extm(extm) {
+            GetArchive(file,content);
+        }
+        void GetArchive(Reader &rd, std::list<contentlist> &content);
+        ~ZIPParser() {
+            if (hdr_mem!=nullptr) {
+                delete hdr_mem;   
+                hdr_mem=nullptr;
+            }
+        }
+        
+    };
+    void ZIPParser::GetArchive(Reader &rd, std::list<contentlist> &content) {
+        FP pFile=rd.fp();
+
+        int fileSignature=0;
+        // Read zip header
+        fread(&fileSignature, sizeof(int), 1, rd.fp());
+        if (fileSignature!=ZIP_SIGNATURE) return;
+
+        int64_t fileSize=0;
+        int64_t currPos=0;
+
+        fseeko(pFile, 0L, SEEK_END);
+        fileSize=ftello(pFile);
+        fseeko(pFile, 0L, SEEK_SET);
+
+        // Seek back the size of the ZipEOCD 
+        // If there is no comments we get signature match
+        currPos=fileSize;
+        int signature=0;
+        while (currPos>0) {
+            fseeko(pFile, currPos, SEEK_SET);
+            fread(&signature, sizeof(int), 1, pFile);
+            if (signature==CENTRAL_DIRECTORY) {
+                break;
+            }
+            currPos-=sizeof(char); //step back one byte
+        }
+
+        if (currPos!=0L) {
+            ZipEOCD zipOECD;
+            fseeko(pFile, currPos, SEEK_SET);
+            fread(&zipOECD, sizeof(ZipEOCD), 1, pFile);
+
+            int32_t memBlockSize=fileSize-zipOECD.offset;
+            if (memBlockSize<=0) return; // bad header, fail
+
+            // Allocate zip header memory
+            hdr_mem=new char[memBlockSize];
+            // Read in the whole central directory
+            fseeko(pFile, zipOECD.offset, SEEK_SET);
+            fread((void*)hdr_mem, memBlockSize-10, 1, pFile);
+            int32_t currMemBlockPos=0;
+            // Read entrys
+            while (currMemBlockPos<memBlockSize) {
+                int sig=*((int*)(hdr_mem + currMemBlockPos));
+                if (sig!=CDE_SIGNATURE) {
+                    if (sig==CENTRAL_DIRECTORY) break;
+                    return; // bad, fail
+                }
+                ZipCDFH ent;
+                memcpy(&ent,hdr_mem+currMemBlockPos,sizeof(ZipCDFH));
+                hdr_offsets.push_back(ent.local_file_header_offset);   // Local header offset
+                cmp_size.push_back(ent.compressed_size);               // Compressed size 
+                currMemBlockPos+=(sizeof(ZipCDFH)+ent.file_name_length+ent.extra_field_length);
+            }
+            
+            // Parse local headers and add files
+            int64_t lastsize=0;
+            contentlist cl;
+            cl.ext=FE_NONE;
+            for (size_t i=0; i<hdr_offsets.size(); ++i) {
+                int entry=hdr_offsets[i];
+                int csize=cmp_size[i];
+                fseeko(pFile, entry, SEEK_SET);
+                ZipLOC lhdr;
+                fread(&lhdr, sizeof(ZipLOC), 1, pFile);
+                if (lhdr.signature!=ZIP_SIGNATURE) return; // bad archive
+                char fname[256];
+                if (lhdr.fnlen>255) return; // fail
+                fread(&fname[0], lhdr.fnlen, 1, pFile);
+                // Only add  files
+                if (lhdr.csize || (lhdr.csize==0 && csize)) {
+                    if (lhdr.csize==0) lhdr.csize=csize; // no local compressed size (.vsix)
+                    if (lastsize==0 && entry) cl.size=lastsize=entry;
+                    else if (entry==0) cl.size=lhdr.fnlen+lhdr.eflen+sizeof(ZipLOC);
+                    else cl.size=(entry-lastsize), lastsize=lastsize+(entry-lastsize);
+                    content.push_back(cl); // gap
+                    //printf("gap: %d\n",cl.size);
+                    //printf("entry %d c: %d offset %d %.*s\n",entry,(lhdr.csize),lhdr.csize?entry+lhdr.fnlen+lhdr.eflen+sizeof(ZipLOC):0,lhdr.fnlen,fname);
+                    cl.size=lhdr.csize;
+                    content.push_back(cl); // file
+                    lastsize=lastsize+lhdr.csize;
+                }
+            }
+            return;
+        }
+        return;
+    }
+}
+
 using namespace warcfile;
+using namespace zipfile;
 
 struct TAR_header{
     char name[124];
@@ -2856,6 +3053,7 @@ void ACD::NextFileStart() {
     fileStart=false;
     file_done=0;
     isTFF=false;
+    fileFragment=0;
 }
 bool ACD::SetExtension(const std::string e) {
     ext=FE_NONE;
@@ -2948,6 +3146,27 @@ void ACD::Parse(const int frags, const char *buf, const int bufptr, const int bu
             delete wfile;
             isTFF=true;
             //printf("WARC large fragments %d\n",content.size());
+        }
+        fileStart=true;
+        if (content.size()>0) {
+            isNewBlock=isNewBlockNext;
+            isNewBlockNext=false;
+            contentlist cl=content.front();
+            fileFragment=cl.size;
+            content.pop_front();
+            int a=extm.GetExtensionFE(cl.ext);
+            minFragment=extm.ExtMin(a); 
+            maxFragment=extm.ExtMax(a);
+            f=extm.ExtFrag(a);
+            isNewFragment=true;
+        } else ext=FE_NONE,isTFF=false;
+   }
+   else if ((ext==FE_ZIP || ext==FE_VSIX || ext==FE_DOCX || ext==FE_XLSX|| ext==FE_ODS || ext==FE_ODT || ext==FE_JAR) && buflen>1024 && fileFragment==0) {
+        if (fileStart==false) {
+            ZIPParser *zipfile=new ZIPParser(in,extm,content);
+            delete zipfile;
+            isTFF=true;
+            //printf("ZIP files & fragments %d\n",content.size());
         }
         fileStart=true;
         if (content.size()>0) {
