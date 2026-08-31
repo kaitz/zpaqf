@@ -4078,7 +4078,7 @@ int Jidac::add() {
   const int ON=4;      // number of order-1 tables to save
   const int level=isdigit(method[0])?(method[0]-'0'):-1;
   unsigned char o1prev[ON*256]={0};  // last ON order 1 predictions
-  const int BUFSIZE=4096*16;  // input buffer 64k
+  const int BUFSIZE=4096*8;  // input buffer 32k
   ACD acd(level, fragment, afragment, MIN_FRAGMENT, MAX_FRAGMENT, blocksize, BUFSIZE);
   libzpaq::Array<char> fragbuf(acd.MaxFrag());
   vector<unsigned> blocklist;  // list of starting fragments
@@ -4700,6 +4700,18 @@ ThreadReturn decompressThread(void* arg) {
 
     // Write the files in dt that point to this block
     lock(job.write_mutex);
+
+    // Pre-calculate fragment size sums
+    const vector<HT> &ht=job.jd.ht;
+    vector<uint64_t> bfs;
+    bfs.resize(ht.size());
+    uint64_t bfsq=0;
+    for (unsigned k=0; k<ht.size(); ++k) {
+        //if (ht[k].usize<0) error("streaming fragment in file");
+        if (ht[k].usize>0) bfsq+=ht[k].usize;
+        bfs[k]=bfsq;
+    }
+    
     for (unsigned ip=0; ip<b.files.size(); ++ip) {
       DTMap::iterator p=b.files[ip];
       if (p->second.date==0 || p->second.data<0
@@ -4709,20 +4721,6 @@ ThreadReturn decompressThread(void* arg) {
       // Look for pointers to this block
       const vector<unsigned>& ptr=p->second.ptr;
       int64_t offset=0;  // write offset
-      
-      // Pre-calculate fragment size sums
-      const vector<HT> &ht=job.jd.ht;
-      vector<uint64_t> bfs;
-      bfs.resize(ht.size());
-      uint64_t bfsq=0;
-      for (unsigned k=0; k<ht.size(); ++k) {
-          //assert(k>0);
-          //assert(k<ht.size());
-          //if (ht[k].usize<0) error("streaming fragment in file");
-          //assert(ht[k].usize>=0);
-          if (ht[k].usize>0) bfsq+=ht[k].usize;
-          bfs[k]=bfsq;
-      }
 
       for (unsigned j=0; j<ptr.size(); ++j) {
         if (ptr[j]<b.start || ptr[j]>=b.start+b.extracted) {
