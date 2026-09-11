@@ -1136,6 +1136,171 @@ FindNextStreamW_t findNextStreamW=0;
 
 class CompressJob;
 
+enum FETypes {
+    FE_NONE=0,
+    FE_JPG=1,
+    FE_PNG=2,
+    FE_JXL=3,
+    FE_VID=4,
+    FE_BMP=5,
+    FE_RAW=6,
+    FE_PM=7,
+    FE_GIF=8,
+    FE_MP3=9,
+    FE_SWF=10,
+    FE_TAR=11,
+    FE_TIF=12,
+    FE_SCP=13, //SuperCard Pro Image File
+    FE_WARC=14,
+    FE_PDF,
+    FE_CSS,
+    FE_HTML,
+    FE_WEBP,
+    FE_WOFF2,
+    FE_ZIP,
+    FE_JS,
+    FE_JSON,
+    FE_MP4,
+    FE_TS,
+    FE_WEBM,
+    FE_SVG,
+    FE_XML,
+    FE_BIN,
+    FE_TXT,
+    FE_MPEG,
+    FE_ISO9960,
+    FE_GZ,
+    FE_RPM,
+    FE_VSIX,
+    FE_DOCX,
+    FE_XLSX,
+    FE_ODS,
+    FE_ODT,
+    FE_JAR
+};
+
+struct contentlist{
+      int64_t size;
+      FETypes ext;
+};
+
+struct Extension {
+    const std::string e;
+    const FETypes     t;
+    const int       mif; // new mid fragment size
+};
+
+static const int ExtCapacity=44;
+
+static const Extension extension[ExtCapacity]={
+    {"", FE_NONE,0},
+    {".jpg", FE_JPG,11},{".jpeg", FE_JPG,11},
+    {".png", FE_PNG,11},
+    {".gif", FE_GIF,11},
+    {".jxl", FE_JXL,0},
+    {".mkv", FE_VID,0},
+    {".avi", FE_VID,0},
+    {".bmp", FE_BMP,0},
+    {".raw", FE_RAW,0},
+    {".pgm", FE_PM,0},{".pbm", FE_PM,0},{".ppm", FE_PM,0},
+    {".mp3", FE_MP3,11},
+    {".swf", FE_SWF,0},
+    {".tar", FE_TAR,0},
+    {".tif", FE_TIF,11},
+    {".scp", FE_SCP,11},
+    {".warc",FE_WARC,0},
+
+    {".pdf",FE_PDF,0},
+    {".css",FE_CSS,0},
+    {".html",FE_HTML,0},
+    {".webp",FE_WEBP,11},
+    {".woff2",FE_WOFF2,11},
+    {".zip",FE_ZIP,0},
+    {".js",FE_JS,0},
+    {".json",FE_JSON,0},
+    {".mp4",FE_MP4,11},
+    {".ts",FE_TS,11},
+    {".webm",FE_WEBM,11},
+    {".svg",FE_SVG,0},
+    {".xml",FE_XML,0},
+    {".bin",FE_BIN,0},
+    {".txt",FE_TXT,0},
+    {".mpeg",FE_MPEG,11},
+    {".iso",FE_ISO9960,0},
+    {".gz",FE_GZ,0},
+    {".rpm",FE_RPM,0},
+    {".vsix",FE_ZIP,0},//FE_VSIX
+    {".docx",FE_ZIP,0},//FE_DOCX
+    {".xlsx",FE_ZIP,0},//FE_XLSX
+    {".ods",FE_ZIP,0},//FE_ODS
+    {".odt",FE_ZIP,0},//FE_ODT
+    {".jar",FE_ZIP,0} //FE_JAR
+    
+};
+
+
+class ExtManager {
+    struct MMFragment{
+      unsigned min;
+      unsigned max;
+      unsigned   f;
+      FETypes    t;
+    };
+    int f;
+    libzpaq::Array<MMFragment> ExtFrags;
+    bool af;
+    unsigned maxFragment,minFragment;
+  public:
+    inline unsigned MaxFrag() {return maxFragment;}
+    inline unsigned MinFrag() {return minFragment;}
+    inline unsigned ExtMax(int i) {return ExtFrags[i].max;}
+    inline unsigned ExtMin(int i) {return ExtFrags[i].min;}
+    inline unsigned ExtFrag(int i) {return ExtFrags[i].f;}
+    inline FETypes ExtType(int i) {return ExtFrags[i].t;}
+    ExtManager(int f, bool af, const unsigned blocksize, unsigned mif, unsigned maf):f(f), ExtFrags(ExtCapacity), af(af),
+    maxFragment(maf),minFragment(mif) {
+    // Use custom fragment sizes ranges for known file types, if defined is larger then extend
+    for (unsigned i=0; i<ExtCapacity; ++i) { 
+      if (af && extension[i].mif>0) {
+        const unsigned newfrag=f>extension[i].mif?extension[i].mif+(f-extension[i].mif):extension[i].mif;
+        ExtFrags[i].f=newfrag;
+        ExtFrags[i].max=newfrag>19 || (8128u<<newfrag)>blocksize-12 ? blocksize-12 : 8128u<<newfrag;
+        ExtFrags[i].min=newfrag>25 || (64u<<newfrag)>ExtFrags[i].max ? ExtFrags[i].max : 64u<<newfrag;
+        if (ExtFrags[i].max>maxFragment) maxFragment=ExtFrags[i].max;
+        ExtFrags[i].t=extension[i].t;
+      } else {
+        ExtFrags[i].min=mif;
+        ExtFrags[i].max=maf;
+        ExtFrags[i].f=f;
+        ExtFrags[i].t=extension[i].t;
+      }
+      assert(ExtFrags[i].f>=0);
+      assert(ExtFrags[i].max>0);
+      assert(ExtFrags[i].min>0);
+    }
+    }
+    int GetExtension(const std::string e) {
+    if (e.size()) {
+      for (int i=0; i<ExtCapacity; ++i) {
+        if (extension[i].e==e) {
+          return i;
+        }
+      }
+    }
+    return -1;
+}
+
+int GetExtensionFE(FETypes t) {
+    for (int i=0; i<ExtCapacity; ++i) {
+        if (extension[i].t==t) {
+            return i;
+        }
+    }
+    return -1;
+}
+    
+};
+
 // Do everything
 class Jidac {
 public:
@@ -1153,6 +1318,7 @@ private:
   bool force;               // -force option
   int fragment;             // -fragment option
   bool afragment;           // -afragment option
+  std::list<int> extDisabled;
   const char* index;        // index option
   char password_string[32]; // hash of -key argument
   const char* password;     // points to password_string or NULL
@@ -1347,6 +1513,14 @@ int Jidac::doCommand(int argc, const char** argv) {
     else if (opt=="-force" || opt=="-f") force=true;
     else if (opt=="-fragment" && i<argc-1) fragment=atoi(argv[++i]);
     else if (opt=="-afragment" && i<argc-1) fragment=atoi(argv[++i]),afragment=true;
+    else if (opt=="-noparse" && i<argc-1) {
+        ExtManager extm(1,false,1,1,2); // dummy
+        std::string ext=argv[++i];
+        ext="."+ext;
+        int ext_val=extm.GetExtension(ext);
+        if (ext_val!=-1)
+        extDisabled.push_back(ext_val);
+    }
     else if (opt=="-index" && i<argc-1) index=argv[++i];
     else if (opt=="-key" && i<argc-1) {
       libzpaq::SHA256 sha256;
@@ -2234,172 +2408,6 @@ struct WriterPair: public libzpaq::Writer {
 };
 
 
-enum FETypes {
-    FE_NONE=0,
-    FE_JPG=1,
-    FE_PNG=2,
-    FE_JXL=3,
-    FE_VID=4,
-    FE_BMP=5,
-    FE_RAW=6,
-    FE_PM=7,
-    FE_GIF=8,
-    FE_MP3=9,
-    FE_SWF=10,
-    FE_TAR=11,
-    FE_TIF=12,
-    FE_SCP=13, //SuperCard Pro Image File
-    FE_WARC=14,
-    FE_PDF,
-    FE_CSS,
-    FE_HTML,
-    FE_WEBP,
-    FE_WOFF2,
-    FE_ZIP,
-    FE_JS,
-    FE_JSON,
-    FE_MP4,
-    FE_TS,
-    FE_WEBM,
-    FE_SVG,
-    FE_XML,
-    FE_BIN,
-    FE_TXT,
-    FE_MPEG,
-    FE_ISO9960,
-    FE_GZ,
-    FE_RPM,
-    FE_VSIX,
-    FE_DOCX,
-    FE_XLSX,
-    FE_ODS,
-    FE_ODT,
-    FE_JAR
-};
-
-struct contentlist{
-      int64_t size;
-      FETypes ext;
-};
-
-struct Extension {
-    const std::string e;
-    const FETypes     t;
-    const int       mif; // new mid fragment size
-};
-
-static const int ExtCapacity=44;
-
-static const Extension extension[ExtCapacity]={
-    {"", FE_NONE,0},
-    {".jpg", FE_JPG,11},{".jpeg", FE_JPG,11},
-    {".png", FE_PNG,11},
-    {".gif", FE_GIF,11},
-    {".jxl", FE_JXL,0},
-    {".mkv", FE_VID,0},
-    {".avi", FE_VID,0},
-    {".bmp", FE_BMP,0},
-    {".raw", FE_RAW,0},
-    {".pgm", FE_PM,0},{".pbm", FE_PM,0},{".ppm", FE_PM,0},
-    {".mp3", FE_MP3,11},
-    {".swf", FE_SWF,0},
-    {".tar", FE_TAR,0},
-    {".tif", FE_TIF,11},
-    {".scp", FE_SCP,11},
-    {".warc",FE_WARC,0},
-
-    {".pdf",FE_PDF,0},
-    {".css",FE_CSS,0},
-    {".html",FE_HTML,0},
-    {".webp",FE_WEBP,11},
-    {".woff2",FE_WOFF2,11},
-    {".zip",FE_ZIP,0},
-    {".js",FE_JS,0},
-    {".json",FE_JSON,0},
-    {".mp4",FE_MP4,11},
-    {".ts",FE_TS,11},
-    {".webm",FE_WEBM,11},
-    {".svg",FE_SVG,0},
-    {".xml",FE_XML,0},
-    {".bin",FE_BIN,0},
-    {".txt",FE_TXT,0},
-    {".mpeg",FE_MPEG,11},
-    {".iso",FE_ISO9960,0},
-    {".gz",FE_GZ,0},
-    {".rpm",FE_RPM,0},
-    {".vsix",FE_VSIX,0},
-    {".docx",FE_DOCX,0},
-    {".xlsx",FE_XLSX,0},
-    {".ods",FE_ODS,0},
-    {".odt",FE_ODT,0},
-    {".jar",FE_JAR,0}
-    
-};
-
-
-class ExtManager {
-    struct MMFragment{
-      unsigned min;
-      unsigned max;
-      unsigned   f;
-      FETypes    t;
-    };
-    int f;
-    libzpaq::Array<MMFragment> ExtFrags;
-    bool af;
-    unsigned maxFragment,minFragment;
-  public:
-    inline unsigned MaxFrag() {return maxFragment;}
-    inline unsigned MinFrag() {return minFragment;}
-    inline unsigned ExtMax(int i) {return ExtFrags[i].max;}
-    inline unsigned ExtMin(int i) {return ExtFrags[i].min;}
-    inline unsigned ExtFrag(int i) {return ExtFrags[i].f;}
-    inline FETypes ExtType(int i) {return ExtFrags[i].t;}
-    ExtManager(int f, bool af, const unsigned blocksize, unsigned mif, unsigned maf):f(f), ExtFrags(ExtCapacity), af(af),
-    maxFragment(maf),minFragment(mif) {
-    // Use custom fragment sizes ranges for known file types, if defined is larger then extend
-    for (unsigned i=0; i<ExtCapacity; ++i) { 
-      if (af && extension[i].mif>0) {
-        const unsigned newfrag=f>extension[i].mif?extension[i].mif+(f-extension[i].mif):extension[i].mif;
-        ExtFrags[i].f=newfrag;
-        ExtFrags[i].max=newfrag>19 || (8128u<<newfrag)>blocksize-12 ? blocksize-12 : 8128u<<newfrag;
-        ExtFrags[i].min=newfrag>25 || (64u<<newfrag)>ExtFrags[i].max ? ExtFrags[i].max : 64u<<newfrag;
-        if (ExtFrags[i].max>maxFragment) maxFragment=ExtFrags[i].max;
-        ExtFrags[i].t=extension[i].t;
-      } else {
-        ExtFrags[i].min=mif;
-        ExtFrags[i].max=maf;
-        ExtFrags[i].f=f;
-        ExtFrags[i].t=extension[i].t;
-      }
-      assert(ExtFrags[i].f>=0);
-      assert(ExtFrags[i].max>0);
-      assert(ExtFrags[i].min>0);
-    }
-    }
-    int GetExtension(const std::string e) {
-    if (e.size()) {
-      for (int i=0; i<ExtCapacity; ++i) {
-        if (extension[i].e==e) {
-          return i;
-        }
-      }
-    }
-    return -1;
-}
-
-int GetExtensionFE(FETypes t) {
-    for (int i=0; i<ExtCapacity; ++i) {
-        if (extension[i].t==t) {
-            return i;
-        }
-    }
-    return -1;
-}
-    
-};
-
-
 namespace reader {
     enum EnumLineTypes {
     LTYPE_NONE,LTYPE_LF,LTYPE_CRLF
@@ -2637,6 +2645,17 @@ std::string mimeToExt(std::string file) {
     else if (file.substr(0,9)=="xhtml+xml") ext=".xml";
     else if (file.substr(0,12)=="octet-stream") ext=".bin";
     else if (file.substr(0,5)=="plain") ext=".txt";
+    else if (file=="vnd.oasis.opendocument.presentation") ext=".zip"; //.odp
+    else if (file=="vnd.oasis.opendocument.spreadsheet") ext=".zip"; //.ods
+    else if (file=="vnd.oasis.opendocument.text") ext=".zip"; //.odt
+    else if (file=="ogg") ext=".ogg";
+    else if (file=="msword") ext=".doc";
+    else if (file=="vnd.openxmlformats-officedocument.wordprocessingml.document") ext=".zip"; // docx
+    else if (file=="vnd.ms-excel") ext=".xls";
+    else if (file=="vnd.openxmlformats-officedocument.spreadsheetml.sheet") ext=".zip"; // docx
+    else if (file=="epub+zip") ext=".zip"; //  
+    else if (file=="vnd.ms-powerpoint") ext=".ppt"; //  
+    else if (file=="vnd.openxmlformats-officedocument.presentationml.presentation") ext=".zip"; //  pptx
     return ext;
 }
 
@@ -2908,20 +2927,15 @@ class ISO9960Parser {
 private:
     Reader file;
     ExtManager &extm;
-    DetectState state;
     uint64_t iso;
     uint8_t sector[2048];
-    uint32_t sectorpos;
     uint32_t sectcount;
     uint32_t rootdir,rootdirsup;
     std::set<uint32_t> sectorl;
     std::vector<ISOfile> isoF;
     uint64_t isoFiles;
     bool volterm;
-    uint32_t buf0, buf1;
-    uint64_t i;
     std::list<int> filesectorlist;
-    uint64_t jstart, jend, inSize, inpos;
 public:    
     ISO9960Parser(FP in,ExtManager &extm, std::list<contentlist> &content);
     ~ISO9960Parser();
@@ -2929,20 +2943,22 @@ public:
     void Reset();
 };
 
-ISO9960Parser::ISO9960Parser(FP in, ExtManager &extm, std::list<contentlist> &content):file(in),extm(extm),inpos(0) {
+ISO9960Parser::ISO9960Parser(FP in, ExtManager &extm, std::list<contentlist> &content):file(in),extm(extm) {
     Reset();
     std::string line="";
-    const size_t BLOCK=0x10000;
+    const size_t BLOCK=2048;
     size_t pos=0;
     bool last=false;
     while (last==false) {
         line=file.ReadBlock(BLOCK);
         pos+=line.size();
         last=line.size()!=BLOCK;
+        
         bool pstate=Parse(&line[0], line.size(), pos, last, content, file.curpos);
         if (file.End() || pstate==false) {
             break;
         }
+        sectcount++;
     }
 }
 
@@ -2950,30 +2966,16 @@ ISO9960Parser::~ISO9960Parser() {
 }
 
 // loop over input block byte by byte and report state
-bool ISO9960Parser::Parse(const char *data, uint64_t len, uint64_t pos, bool last, std::list<contentlist> &content,int64_t startpos) {
-    // To small? 
-    if (pos==0 && len<(25*2048)) return false; // min 25 sectors
-    // Are we in new data block, if so reset inSize and restart
-    if (inpos!=pos) {
-        inSize=0,inpos=pos;
-        i=pos;
-    }
-    
-    while (inSize<len) {
-        buf1=(buf1<<8)|(buf0>>24);
-        const uint8_t c=data[inSize];
-        buf0=(buf0<<8)+c;
-
-        if (state==NONE && i>0x8000 && (buf1&0xffffff)==0x014344 && buf0==0x30303101) { 
-            state=INFO;
-            jstart=iso=i-(0x8000+6);
-            sectcount=16;
-            if (inSize>=7) for (size_t j=7; j>0; j--) sector[7-j]=data[inSize+1-j];
-            sectorpos=7;
-        }else if (state==INFO && sectorpos<2048) {
-            sector[sectorpos++]=c;
-            
-            if (state==INFO && sectorpos==2048 && volterm==false) {
+bool ISO9960Parser::Parse(const char *sector, uint64_t len, uint64_t pos, bool last, std::list<contentlist> &content,int64_t startpos) {
+    {
+        if (sectcount==16) {
+            uint32_t buf0=0,buf1=0;
+            for (size_t j=0; j<4; j++) buf0=buf0*256+sector[j];
+            for (size_t j=0; j<3; j++) buf1=buf1*256+sector[j+4];
+            if (!( (buf1&0xffffff)==0x303101 && buf0==0x01434430)) return false;
+        }
+        if (sectcount>=16) {
+            if (volterm==false) {
                 i9660_vd vd;
                 memcpy(&vd, sector, sizeof(i9660_vd));
                 if (vd.type==1 && rootdir==0) {
@@ -2982,45 +2984,53 @@ bool ISO9960Parser::Parse(const char *data, uint64_t len, uint64_t pos, bool las
                     uint16_t lbs=vd.logical_block_size.le[0]+vd.logical_block_size.le[1]*256;
                     //printf("Sector size %d\n",lbs); //2048
                     uint32_t rts=vd.root_dir.sector.le[0]+(vd.root_dir.sector.le[1]<<8)+(vd.root_dir.sector.le[3]<<16)+(vd.root_dir.sector.le[3]<<24);
-                    //printf("Root dir LBA %d\n",rts);
-                    //uint32_t &rtss=(uint32_t&)vd.root_dir.size.le[0];
-                    //printf("Root size %d\n",rtss);
+                  //  printf("Root dir LBA %d\n",rts);
+                   // uint32_t &rtss=(uint32_t&)vd.root_dir.size.le[0];
+                   // printf("Root size %d\n",rtss);
                     rootdir=rts;
                     isoFiles=0;
-                    if (lbs!=2048 || last==true) sectcount=sectorpos=rootdir=rootdirsup=0,state=NONE;
+                    sectorl.insert(rts); // Add root dir
+                    if (lbs!=2048 || last==true) sectcount=rootdir=rootdirsup=0;
                 } else if (vd.type==2 && rootdirsup==0) {
                     // Supplementary Volume Descriptor
                     //printf("Supplementary Volume Descriptor, sector %d \n",sectcount);
                     uint16_t lbs=vd.logical_block_size.le[0]+vd.logical_block_size.le[1]*256;
-                    //printf("Sector size %d\n",lbs); //2048
+                   // printf("Sector size %d\n",lbs); //2048
                     //uint32_t &rts=(uint32_t&)vd.root_dir.sector.le[0];
                     uint32_t rts=vd.root_dir.sector.le[0]+(vd.root_dir.sector.le[1]<<8)+(vd.root_dir.sector.le[3]<<16)+(vd.root_dir.sector.le[3]<<24);
-                    //printf("Root dir LBA %d\n",rts);
+                   // printf("Root dir LBA %d\n",rts);
                     //uint32_t &rtss=(uint32_t&)vd.root_dir.size.le[0];
                     //printf("Root size %d\n",rtss);
                     rootdirsup=rts;
                     isoFiles=0;
-                    if (lbs!=2048 || last==true) sectcount=sectorpos=rootdir=rootdirsup=0,state=NONE;
+                    if (lbs!=2048 || last==true) rootdir=rootdirsup=0;
                 } else if (vd.type==1 || vd.type==2 || vd.type==3 || vd.type==0 || vd.type==255) {
                     if (vd.type==255) volterm=true;
                 } else {
-                    sectcount=sectorpos=rootdir=rootdirsup=0,state=NONE;
+                    rootdir=rootdirsup=0;
                 }
-                sectorpos%=2048;
-                sectcount++;
-            } else if (state==INFO && sectorpos==2048 && sectcount>=rootdir && sectcount!=rootdirsup) {
+                //sectorpos%=2048;
+                //sectcount++;
+            } 
+            std::set<uint32_t>::iterator pos;
+            pos=sectorl.find(sectcount);
+                     
+                 //   if (pos==sectorl.end() /*&& posd!=filesectorlist.end()*/) {
+            
+            if (pos!=sectorl.end()/*state==INFO && sectorpos==2048 &&*/ && sectcount>=rootdir && sectcount!=rootdirsup) {
                 int dirlenght=0;
-                bool wrongs=false; // is wrong sector?
+                //printf("Cur S: %d\n",sectcount);
+                bool wrongs=false; // Is wrong sector?
                 // Ignore Supplementary root dir
-                if (sectorl.size()>0 && rootdirsup) {
+               /* if (sectorl.size()>0 && rootdirsup) {
                     std::set<uint32_t>::iterator pos;
                     pos=sectorl.find(sectcount);
-                    if (pos==sectorl.end() && sectcount>=rootdirsup) {
+                    if ( sectcount==rootdirsup) {
                         wrongs=true;
-                    } else {
-                        sectorl.erase(sectcount);
+                    //} else {
+                    //    sectorl.erase(sectcount);
                     }
-                }
+                }*/
                 // ISO9660 Extensions - SUSP 
                 //CE: Continuation area
                 //PD: Padding field
@@ -3028,46 +3038,65 @@ bool ISO9960Parser::Parse(const char *data, uint64_t len, uint64_t pos, bool las
                 //ST: Sharing protocol terminator
                 //ER: Extensions reference
                 //ES: Extension selector
-                // ignore sectors if SUSP
-                // maybe ignere if >255 ?
+                // Ignore sectors if SUSP
+                // Maybe ignere if >255 ?
                 uint16_t rr=sector[0]+sector[1]*256;
                 if (rr==0x4543 || rr== 0x4450 || rr== 0x5053 || rr== 0x5453 || rr== 0x5245 || rr== 0x5345) wrongs=true;
+                // Test if current sector is in dir list
+                if (sectorl.size()>0) {
+                    std::list<int>::iterator  posd=std::find(filesectorlist.begin(), filesectorlist.end(), sectcount);
+                    
+                    if (posd!=filesectorlist.end()) {
+                       
+                        sectorl.erase(sectcount);//printf("Delf S: %d\n",sectcount);
+                    }
+                    std::set<uint32_t>::iterator pos;
+                    pos=sectorl.find(sectcount);
+                     //printf("Cur S: %d\n",sectcount);
+                    if (pos==sectorl.end() /*&& posd!=filesectorlist.end()*/) {
+                        wrongs=true;
+                    } else {
+                        sectorl.erase(sectcount);
+                      //  printf("Del S: %d Total: %d Files: %d\n",sectcount,sectorl.size(),isoF.size());
+                    }
+                }
                 if (wrongs==false) {
+                    uint32_t fnamelen=0;
                     do {
                         i9660_dir dent;
                         memcpy(&dent,&sector[dirlenght],sizeof(i9660_dir));
                         uint32_t dent_sector=dent.sector.le[0]+(dent.sector.le[1]<<8)+(dent.sector.le[2]<<16)+(dent.sector.le[3]<<24);
                         uint32_t dent_size=dent.size.le[0]+(dent.size.le[1]<<8)+(dent.size.le[2]<<16)+(dent.size.le[3]<<24);
                         if (dent.length==0 || dent_sector==0) {
-                            dirlenght+=12+sizeof(i9660_dir);
+                            if (dirlenght==0 || sectorl.size()==0) break;
+                            dirlenght+=sizeof(i9660_dir)+fnamelen;
                             // Spans multile sectors?
-                            if (dirlenght>=2048) sectorl.insert(sectcount+1);
+                            std::list<int>::iterator pos=std::find(filesectorlist.begin(), filesectorlist.end(), sectcount+1);
+                            
+                           // if(pos==filesectorlist.end()) {
+                            if (dirlenght>=2048 && pos==filesectorlist.end()) sectorl.insert(sectcount+1);
                             break;
                         } 
-                        
                         // Add files
-                        if ((dent.flags&2)!=2 && dent_size>8 && dent.xattr_length==0) {
+                        if ((dent.flags&2)!=2 && dent_size>0 && dent.xattr_length==0) {
                             // Process files with lenght >8 and ignore any file with xattr_length
                             // Get file name, it may end with ;1, if so remove it. If '.' is left then also remove
                             uint32_t nlen=dent.name_len;
                             std::string fname="";
-                            char *name=(char*)&dent.name;
-                            for (uint32_t j=0; j<nlen; j++) fname+=name[j];
+                            for (int j=0; j<nlen; j++) fname+=sector[dirlenght+sizeof(i9660_dir)-1+j];
                             //printf("%d %d %s\n",dent_sector,(uint32_t&)dent.size.le[0],fname.c_str());
                             if (fname.size()>3 && fname.substr(fname.size()-2,2)==";1") fname.pop_back(),fname.pop_back();
                             if (fname.size()>2 && fname.substr(fname.size()-1,1)==".") fname.pop_back();
                             ISOfile tf;
                             tf.start=dent_sector;
-                            // look for hardlinked files or files that point to same sector and if found then exclude from file list
+                            // Look for hardlinked files or files that point to same sector and if found then exclude from file list
                             std::list<int>::iterator pos=std::find(filesectorlist.begin(), filesectorlist.end(), tf.start);
                             filesectorlist.push_back(tf.start);
+                            //printf("%d\n",dent_size);
                             if(pos==filesectorlist.end()) {
                                 tf.start=tf.start*2048;
                                 tf.size=dent_size;
-                                //ParserType etype=GetTypeFromExt(fname);
-                                //tf.p=etype;
                                 std::string ext=fname;
-                                //std::string fext="";
                                 std::string::size_type dotp=ext.rfind('.');
                                 if(dotp!=std::string::npos) {
                                     ext=ext.substr(dotp);
@@ -3081,21 +3110,30 @@ bool ISO9960Parser::Parse(const char *data, uint64_t len, uint64_t pos, bool las
                                 isoF.push_back(tf);
                                 isoFiles++;
                             }
+                           /* std::set<uint32_t>::iterator posd=sectorl.find(tf.start);
+                    
+                    if (posd!=sectorl.end()) {
+                       
+                        sectorl.erase(tf.start);
+                    }*/
                         }
-                        /*
-                        int32_t nlen=dent.name_len;
+                        
+                        int32_t nlen=fnamelen=dent.name_len;
                         std::string fname="";
                         char *name=(char*)&dent.name;
-                        for (int j=0; j<nlen; j++) fname+=name[j];
-                        if ((dent.flags&2)==2)    
-                        printf("%s %d %d %d %s\n",(dent.flags&2)!=2?"F":"D",dent.length,dent_sector,(uint32_t&)dent.size.le[0],fname.c_str());
-                        */
+                        for (int j=0; j<nlen; j++) fname+=sector[dirlenght+sizeof(i9660_dir)-1+j];
+                        //printf("len %d %.*s\n",nlen,nlen,(char*)&sector[dirlenght+sizeof(i9660_dir)-1]);
+                        //if ((dent.flags&2)==2)    
+                      //  if (!(dent.name==1 || dent.name==0))printf("%s %d s: %d %d %s\n",(dent.flags&2)!=2?"F":"D",dent.length,dent_sector,(uint32_t&)dent.size.le[0],fname.c_str());
+                        
                         // Collect info about directorys
                         if ((dent.flags&2)==2 && dent.name!=1&& dent.name!=0 && sectcount!=dent_sector && dent.xattr_length==0) {
-                            // add subdir
+                            // Add subdir
                             sectorl.insert(dent_sector);
-                        } else if ((dent.flags&2)==2 && rootdirsup==0) {
-                            // remove subdir
+                            //printf("%s %d s: %d %d %s\n",(dent.flags&2)!=2?"F":"D",dent.length,dent_sector,(uint32_t&)dent.size.le[0],fname.c_str());
+                            //printf("Add S: %d\n",dent_sector);
+                        } else if ((dent.flags&2)==2 || (dent.name==1 || dent.name==0)) {
+                            // Remove subdir
                             std::set<uint32_t>::iterator pos;
                             uint32_t elf=dent_sector;
                             // Is current sector subdir is same then remove
@@ -3106,64 +3144,39 @@ bool ISO9960Parser::Parse(const char *data, uint64_t len, uint64_t pos, bool las
                         }
                         dirlenght=dirlenght+dent.length;
                         if (dent.length==0) dirlenght=0;
+                        /*if (sectorl.size()==0) {
+                            printf("ISO total files: %d\n",isoF.size());
+                        }*/
                     } while (dirlenght);
                     // To be sure we remove current sector from dir list.
-                    std::set<uint32_t>::iterator pos;
+                  /* std::set<uint32_t>::iterator pos;
                     pos=sectorl.find(sectcount);
                     if (pos!=sectorl.end()) {
                         sectorl.erase(sectcount);
-                    }
+                    }*/
                     //printf(" Dirs: %d, files: %d\n",sectorl.size(),isoF.size());
                 }
-                if (state==INFO) jend=i;
+
+                // All dirs parsed?
                 if (sectorl.size()==0) {
-                    jend=0;
-                    // sort
-                    // file sectors my be out of order
+                    // Sort. File sectors my be out of order
                     int n=isoF.size();
                     printf("ISO total files: %d\n",n);
                     std::sort(isoF.begin(), isoF.end(), [](const ISOfile &a, const ISOfile &b) {
                         return (a.start < b.start);
                     });
-                    /*for (int i=0; i<isoF.size(); i++) {
-                            //if ((isoF[i+1].start+isoF[i+1].size)>isoF[i+1].start){
-                                printf("Bad size %d %d %d\n",i,isoF[i].start,isoF[i].size);
-                        // }
-                    }*/
-                    // recursive mode, report all iso file ranges
-                    // file extension based type parser set in info
+                    // Generate content list of file start/end positions
+                    uint64_t isofend=0;
                     while (isoFiles) {
-                        
                         ISOfile isofile=isoF[isoF.size()-isoFiles];
-                        jstart=isofile.start;//-(relAdd-iso);
-                        
-                        uint64_t oldend=jend+startpos;
-                        //if (startpos) printf("%d\n",startpos);
-                        
+                        uint64_t jstart=isofile.start;
+                        uint64_t oldend=isofend+startpos;
                         contentlist cl;
                         cl.ext=FE_NONE;
-                        jend=jstart+isofile.size-startpos;
-                        //if (startpos) printf("%d %d\n",oldend,jstart);
-                        
+                        isofend=jstart+isofile.size-startpos;
                         int gaps=0;
                         if (oldend<jstart) {
-                            cl.size=gaps=jstart-oldend;//,
-                            //printf("Gap size %d\n",jstart-oldend);
-                            
-                            /*if (cl.size>511) {
-                int parts=0;
-                parts=cl.size%512;//printf("Gap size %d\n",cl.size);
-                int count=cl.size/512;
-                cl.size=parts;
-                    content.push_back(cl);
-                //if (count){
-                    while (count--) {
-                    cl.size=512;
-                    content.push_back(cl);
-                    } 
-                //} 
-            }
-            else*/
+                            cl.size=gaps=jstart-oldend;
                             content.push_back(cl);
                         }
                         startpos=0;
@@ -3176,31 +3189,17 @@ bool ISO9960Parser::Parse(const char *data, uint64_t len, uint64_t pos, bool las
                     }
                     return false;        
                 }
-                sectorpos=0;
-                sectcount++;
-            } else if (state==INFO && sectorpos==2048) {
-                sectorpos%=2048;
-                sectcount++;
             }
         }
-
-        inSize++;
-        i++;
     }
 
-    if (state==INFO) {jend=i+1; return true;}
-    // Are we still reading data for our type
-    if (state!=NONE)
     return true;
-    else return false;
 }
 
 void ISO9960Parser::Reset() {
-    state=NONE,jstart=jend=buf0=buf1=0;
     iso=0,sectcount=0,rootdir=0,rootdirsup=0;
     isoFiles=0; 
     isoF.clear();
-    i=inSize=0;
     volterm=false;
 }
 }
@@ -3281,7 +3280,7 @@ namespace zipfile {
 
         int fileSignature=0;
         // Read zip header
-        fread(&fileSignature, sizeof(int), 1, rd.fp());
+        if (sizeof(int)!=fread(&fileSignature, sizeof(int), 1, rd.fp())) return;
         if (fileSignature!=ZIP_SIGNATURE) return;
 
         int64_t fileSize=0;
@@ -3297,7 +3296,7 @@ namespace zipfile {
         int signature=0;
         while (currPos>0) {
             fseeko(pFile, currPos, SEEK_SET);
-            fread(&signature, sizeof(int), 1, pFile);
+            if (sizeof(int)!=fread(&signature, sizeof(int), 1, pFile)) return;
             if (signature==CENTRAL_DIRECTORY) {
                 break;
             }
@@ -3307,7 +3306,7 @@ namespace zipfile {
         if (currPos!=0L) {
             ZipEOCD zipOECD;
             fseeko(pFile, currPos, SEEK_SET);
-            fread(&zipOECD, sizeof(ZipEOCD), 1, pFile);
+            if (sizeof(ZipEOCD)!=fread(&zipOECD, sizeof(ZipEOCD), 1, pFile)) return;
 
             int32_t memBlockSize=fileSize-zipOECD.offset;
             if (memBlockSize<=0) return; // bad header, fail
@@ -3316,7 +3315,7 @@ namespace zipfile {
             hdr_mem=new char[memBlockSize];
             // Read in the whole central directory
             fseeko(pFile, zipOECD.offset, SEEK_SET);
-            fread((void*)hdr_mem, memBlockSize-10, 1, pFile);
+            if ((memBlockSize-10)!=fread((void*)hdr_mem, memBlockSize-10, 1, pFile)) return;
             int32_t currMemBlockPos=0;
             // Read entrys
             while (currMemBlockPos<memBlockSize) {
@@ -3341,11 +3340,11 @@ namespace zipfile {
                 int csize=cmp_size[i];
                 fseeko(pFile, entry, SEEK_SET);
                 ZipLOC lhdr;
-                fread(&lhdr, sizeof(ZipLOC), 1, pFile);
+                if (sizeof(ZipLOC)!=fread(&lhdr, sizeof(ZipLOC), 1, pFile)) return;
                 if (lhdr.signature!=ZIP_SIGNATURE) return; // bad archive
                 char fname[256];
                 if (lhdr.fnlen>255) return; // fail
-                fread(&fname[0], lhdr.fnlen, 1, pFile);
+                if (lhdr.fnlen!=fread(&fname[0], lhdr.fnlen, 1, pFile)) return;
                 // Only add  files
                 if (lhdr.csize || (lhdr.csize==0 && csize)) {
                     if (lhdr.csize==0) lhdr.csize=csize; // no local compressed size (.vsix)
@@ -3386,7 +3385,7 @@ public:
   void TFNext(int64_t z);
   bool SetExtension(const std::string e);
   void NextFileStart();
-  void Parse(const int frags, const char *buf, const int bufptr, const int buflen, const int64_t infSize, FP in);
+  void Parse(const int frags, const char *buf, const int bufptr, const int buflen, const int64_t infSize, FP in, std::list<int> &extDisabled);
   inline unsigned MinFrag() {return minFragment;}
   inline unsigned MaxFrag() {return maxFragment;}
   inline unsigned Frag() {return f;}
@@ -3408,7 +3407,7 @@ private:
   unsigned maxFragment,minFragment;
   const unsigned dmaxFragment,dminFragment;
   FETypes pext,ext;
-  int64_t fileFragment,fileFragmentNext,fileFragmentPad;
+  int64_t fileFragment;
   SpecialType pfState,isIMAGE;
   int info;
   int pfData,imbWidth;
@@ -3425,7 +3424,7 @@ private:
 };
 ACD::ACD(int l, int f, bool af, unsigned mif, unsigned maf, const unsigned blocksize, const int BUFSIZE):level(l),f(f),of(f),af(af),
   maxFragment(maf),minFragment(mif),dmaxFragment(maf),dminFragment(mif),pext(FE_NONE),ext(FE_NONE),
-  fileFragment(0),fileFragmentNext(0),fileFragmentPad(0),
+  fileFragment(0),
   pfState(IM_NONE),isIMAGE(IM_NONE),info(0),pfData(0),imbWidth(0),fileStart(false),
   file_done(0),BUFSIZE(BUFSIZE),blocksize(blocksize),content(0),isTFF(false),extm(f,af,blocksize,mif,maf),
   isNewFragment(false),isNewBlock(false),isNewBlockNext(false) {
@@ -3438,7 +3437,6 @@ inline void ACD::Eof(int64_t fsize) {
 inline void ACD::TFNext(int64_t z) {
     if (fileFragment) {
         fileFragment-=z;
-        if (fileFragment==0) fileFragment=fileFragmentNext,fileFragmentNext=fileFragmentPad,fileFragmentPad=0;
     }
     file_done+=z;
     isNewBlock=false;
@@ -3482,6 +3480,9 @@ inline bool ACD::IsNewBlock(bool nb, int64_t fsize, bool sb){
                 else if ((ext!=FE_GIF && pext==FE_GIF) || (pext!=FE_GIF && ext==FE_GIF)) newblock=true;
                 else if ((ext!=FE_TIF && pext==FE_TIF) || (pext!=FE_TIF && ext==FE_TIF)) newblock=true;
                 else if ((ext!=FE_SCP && pext==FE_SCP) || (pext!=FE_SCP && ext==FE_SCP)) newblock=true;
+                else if ((ext!=FE_HTML && pext==FE_HTML) || (pext!=FE_HTML && ext==FE_HTML)) newblock=true;
+                else if ((ext!=FE_XML && pext==FE_XML) || (pext!=FE_XML && ext==FE_XML)) newblock=true;
+                
                 //if ((ext!=FE_NONE ||  pext!=FE_NONE) && ext!=pext) newblock=true;
             }
         }
@@ -3511,15 +3512,25 @@ inline bool ACD::TAR_End(const char *p) {
     return p[0] == 0 && !memcmp(p, p + 1, 512 - 1);
 }
 
-void ACD::Parse(const int frags, const char *buf, const int bufptr, const int buflen, const int64_t infSize, FP in) {
+void ACD::Parse(const int frags, const char *buf, const int bufptr, const int buflen, const int64_t infSize, FP in, std::list<int> &extDisabled) {
     isNewFragment=false;
     if (ext==FE_TAR && buflen>1024 && fileFragment==0) {
         fileStart=true;
+        if (content.size()>0) {
+            contentlist cl=content.front();
+            fileFragment=cl.size;
+            isNewFragment=true;   // Siganl about change in fragment size
+            content.pop_front();
+            int a=extm.GetExtensionFE(cl.ext);
+            minFragment=extm.ExtMin(a); 
+            maxFragment=extm.ExtMax(a);
+            f=extm.ExtFrag(a);
+        } else {
         TAR_header &tarHdr=(TAR_header&)buf[bufptr];
         bool badTAR=false;
         if ((bufptr+511)>=buflen) badTAR=true;
-        else if (TAR_End((char*)&tarHdr))  badTAR=true;
-        else if (!TAR_Checksum((char*)&tarHdr))  badTAR=true;
+        else if (TAR_End((char*)&tarHdr)) badTAR=true;
+        else if (!TAR_Checksum((char*)&tarHdr)) badTAR=true;
         else {
             int64_t tfsize=TAR_GetOctal(tarHdr.size,12);
             int64_t tfp=0;
@@ -3528,12 +3539,37 @@ void ACD::Parse(const int frags, const char *buf, const int bufptr, const int bu
             else if (tfsize==0) tfp=512;
             else tfp=tfsize;
             
-            fileFragment=512, fileFragmentNext=tfsize;
-            fileFragmentPad=tfp-tfsize;
+            std::string ext=tarHdr.name;
+            std::string::size_type dotp=ext.rfind('.');
+            if(dotp!=std::string::npos) {
+               ext=ext.substr(dotp);
+               std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+                char endch=ext.back();
+                if (endch=='/') ext="";
+            } else ext="";
+            int a=extm.GetExtension(ext);
+            contentlist cl;
+            cl.ext=FE_NONE;
+            if (a!=-1) {
+                cl.ext=extm.ExtType(a);
+            }
+            if (tfsize) {
+                // Add file contet
+                cl.size=tfsize;
+                content.push_back(cl);
+                cl.ext=FE_NONE;
+                cl.size=tfp-tfsize;
+                // Is there pad size
+                if (cl.size)
+                content.push_back(cl);
+            }
+            // Start with header
+            fileFragment=512;
             if ((file_done+tfp)>(infSize-512)) badTAR=true;
             isTFF=true;
         }
-        if (badTAR) ext=FE_NONE,fileFragment=fileFragmentNext=fileFragmentPad=0,isTFF=false;
+        if (badTAR) ext=FE_NONE,fileFragment=0,isTFF=false,content.clear();
+        }
     }
     else if (ext==FE_WARC && buflen>1024 && fileFragment==0) {
         if (fileStart==false) {
@@ -3579,7 +3615,8 @@ void ACD::Parse(const int frags, const char *buf, const int bufptr, const int bu
             isNewFragment=true;
         } else ext=FE_NONE,isTFF=false;
    }
-   else if ((ext==FE_ZIP || ext==FE_VSIX || ext==FE_DOCX || ext==FE_XLSX|| ext==FE_ODS || ext==FE_ODT || ext==FE_JAR) && buflen>1024 && fileFragment==0) {
+   else if (ext==FE_ZIP && !(std::find(extDisabled.begin(), extDisabled.end(), ext)==extDisabled.end() && extDisabled.size()) && 
+     buflen>1024 && fileFragment==0) {
         if (fileStart==false) {
             ZIPParser *zipfile=new ZIPParser(in,extm,content);
             delete zipfile;
@@ -3599,7 +3636,7 @@ void ACD::Parse(const int frags, const char *buf, const int bufptr, const int bu
             f=extm.ExtFrag(a);
             isNewFragment=true;
         } else ext=FE_NONE,isTFF=false;
-   }
+    }
     else if (level>2 && ext!=FE_NONE && fileStart==false && pfState==IM_NONE) {
         fileStart=true;
         if (ext==FE_BMP && buflen==BUFSIZE) {
@@ -4147,7 +4184,7 @@ int Jidac::add() {
         while (true) {
           if (bufptr>=buflen) bufptr=0, buflen=fread(&buf[0], 1, BUFSIZE, in);
           // detect known types at level 3 and up
-          acd.Parse(frags, &buf[0], bufptr, buflen, infSize, in);
+          acd.Parse(frags, &buf[0], bufptr, buflen, infSize, in, extDisabled);
           if (acd.ChangeFragment()) {
               MIN_FRAGMENT_NEW=acd.MinFrag();
               MAX_FRAGMENT_NEW=acd.MaxFrag();
