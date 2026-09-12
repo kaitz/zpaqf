@@ -1324,6 +1324,8 @@ private:
   const char* password;     // points to password_string or NULL
   string method;            // default "1"
   bool noattributes;        // -noattributes option
+  bool nodelete;            // -nodelete option
+  string nodelete_ext;      // file extension to be preserved
   vector<string> notfiles;  // list of prefixes to exclude
   string nottype;           // -not =...
   vector<string> onlyfiles; // list of prefixes to include
@@ -1467,6 +1469,8 @@ int Jidac::doCommand(int argc, const char** argv) {
   index=0;
   method="";  // 0..5
   noattributes=false;
+  nodelete=false;
+  nodelete_ext="";
   repack=0;
   new_password=0;
   summary=0; // detailed: -1
@@ -1521,6 +1525,11 @@ int Jidac::doCommand(int argc, const char** argv) {
         if (ext_val!=-1)
         extDisabled.push_back(ext_val);
     }
+    else if (opt=="-nodelete" && i<argc-1) {
+        nodelete_ext=argv[++i];
+        nodelete_ext="."+nodelete_ext;
+        nodelete=true;
+    } 
     else if (opt=="-index" && i<argc-1) index=argv[++i];
     else if (opt=="-key" && i<argc-1) {
       libzpaq::SHA256 sha256;
@@ -3315,7 +3324,7 @@ namespace zipfile {
             hdr_mem=new char[memBlockSize];
             // Read in the whole central directory
             fseeko(pFile, zipOECD.offset, SEEK_SET);
-            if ((memBlockSize-10)!=fread((void*)hdr_mem, memBlockSize-10, 1, pFile)) return;
+            if (uint32_t(memBlockSize-10)!=fread((void*)hdr_mem, memBlockSize-10, 1, pFile)) return;
             int32_t currMemBlockPos=0;
             // Read entrys
             while (currMemBlockPos<memBlockSize) {
@@ -4412,7 +4421,19 @@ int Jidac::add() {
   int dtcount=0;  // index block header name
   int removed=0;  // count
   for (DTMap::iterator p=dt.begin(); p!=dt.end(); ++p) {
-    if (p->second.date && !p->second.data) {
+    bool skipext=false;
+    if (nodelete==true) {
+          std::string::size_type dotp=p->first.rfind('.');
+          if(dotp!=std::string::npos) {
+              std::string fext=p->first.substr(dotp);
+              std::transform(fext.begin(), fext.end(), fext.begin(),[](unsigned char c){ return std::tolower(c); });
+              if (fext==nodelete_ext) skipext=true;
+          }
+    }
+    if (nodelete==true && skipext==true) {
+        continue;
+    }
+    else if (p->second.date && !p->second.data) {
       puti(is, 0, 8);
       is.write(p->first.c_str(), strlen(p->first.c_str()));
       is.put(0);
