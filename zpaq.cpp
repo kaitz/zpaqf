@@ -1190,7 +1190,7 @@ struct Extension {
     const int       mif; // new mid fragment size
 };
 
-static const int ExtCapacity=44;
+static const int ExtCapacity=45;
 
 static const Extension extension[ExtCapacity]={
     {"", FE_NONE,0},
@@ -1213,6 +1213,7 @@ static const Extension extension[ExtCapacity]={
     {".pdf",FE_PDF,0},
     {".css",FE_CSS,0},
     {".html",FE_HTML,0},
+    {".htm",FE_HTML,0},
     {".webp",FE_WEBP,11},
     {".woff2",FE_WOFF2,11},
     {".zip",FE_ZIP,0},
