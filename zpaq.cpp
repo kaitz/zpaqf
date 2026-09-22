@@ -3093,7 +3093,7 @@ bool ISO9960Parser::Parse(const char *sector, uint64_t len, uint64_t pos, bool l
                             // Get file name, it may end with ;1, if so remove it. If '.' is left then also remove
                             uint32_t nlen=dent.name_len;
                             std::string fname="";
-                            for (int j=0; j<nlen; j++) fname+=sector[dirlenght+sizeof(i9660_dir)-1+j];
+                            for (uint32_t j=0; j<nlen; j++) fname+=sector[dirlenght+sizeof(i9660_dir)-1+j];
                             //printf("%d %d %s\n",dent_sector,(uint32_t&)dent.size.le[0],fname.c_str());
                             if (fname.size()>3 && fname.substr(fname.size()-2,2)==";1") fname.pop_back(),fname.pop_back();
                             if (fname.size()>2 && fname.substr(fname.size()-1,1)==".") fname.pop_back();

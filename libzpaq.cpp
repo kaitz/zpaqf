@@ -2697,6 +2697,8 @@ int Compiler::compile_comp(ZPAQL& z) {
     if (z.hend>=z.header.isize()-130 || z.hend-z.hbegin+z.cend-2>65535)
       syntaxError("program too big");
   }
+  if (if_stack.size()) error("unmatched IF");
+  if (do_stack.size()) error("unmatched DO");
   z.header[z.hend++]=(0); // END
   return op;
 }

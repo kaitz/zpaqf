@@ -1330,6 +1330,9 @@ private:
       if (top<=0) error("unmatched IF or DO");
       return s[--top];
     }
+    int size() {
+      return top;
+    }
   };
 
   Stack if_stack, do_stack;
