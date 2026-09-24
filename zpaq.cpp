@@ -3290,7 +3290,7 @@ namespace zipfile {
 
         int fileSignature=0;
         // Read zip header
-        if (sizeof(int)!=fread(&fileSignature, sizeof(int), 1, rd.fp())) return;
+        if (sizeof(int)!=fread(&fileSignature, 1, sizeof(int), rd.fp())) return;
         if (fileSignature!=ZIP_SIGNATURE) return;
 
         int64_t fileSize=0;
@@ -3302,21 +3302,22 @@ namespace zipfile {
 
         // Seek back the size of the ZipEOCD 
         // If there is no comments we get signature match
-        currPos=fileSize;
+        currPos=fileSize-4;
         int signature=0;
-        while (currPos>0) {
+        while (currPos>4) {
             fseeko(pFile, currPos, SEEK_SET);
-            if (sizeof(int)!=fread(&signature, sizeof(int), 1, pFile)) return;
+            if (sizeof(int)!=fread(&signature, 1, sizeof(int), pFile)) return;
             if (signature==CENTRAL_DIRECTORY) {
                 break;
             }
+            if ((fileSize-currPos)>0xffff) return; // no signature in 0xffff bytes
             currPos-=sizeof(char); //step back one byte
         }
 
-        if (currPos!=0L) {
+        if (currPos>0L) {
             ZipEOCD zipOECD;
             fseeko(pFile, currPos, SEEK_SET);
-            if (sizeof(ZipEOCD)!=fread(&zipOECD, sizeof(ZipEOCD), 1, pFile)) return;
+            if (sizeof(ZipEOCD)!=fread(&zipOECD, 1, sizeof(ZipEOCD), pFile)) return;
 
             int32_t memBlockSize=fileSize-zipOECD.offset;
             if (memBlockSize<=0) return; // bad header, fail
@@ -3325,7 +3326,7 @@ namespace zipfile {
             hdr_mem=new char[memBlockSize];
             // Read in the whole central directory
             fseeko(pFile, zipOECD.offset, SEEK_SET);
-            if (uint32_t(memBlockSize-10)!=fread((void*)hdr_mem, memBlockSize-10, 1, pFile)) return;
+            if (uint32_t(memBlockSize-10)!=fread((void*)hdr_mem, 1, memBlockSize-10, pFile)) return;
             int32_t currMemBlockPos=0;
             // Read entrys
             while (currMemBlockPos<memBlockSize) {
@@ -3350,11 +3351,11 @@ namespace zipfile {
                 int csize=cmp_size[i];
                 fseeko(pFile, entry, SEEK_SET);
                 ZipLOC lhdr;
-                if (sizeof(ZipLOC)!=fread(&lhdr, sizeof(ZipLOC), 1, pFile)) return;
+                if (sizeof(ZipLOC)!=fread(&lhdr, 1, sizeof(ZipLOC), pFile)) return;
                 if (lhdr.signature!=ZIP_SIGNATURE) return; // bad archive
                 char fname[256];
                 if (lhdr.fnlen>255) return; // fail
-                if (lhdr.fnlen!=fread(&fname[0], lhdr.fnlen, 1, pFile)) return;
+                if (lhdr.fnlen!=fread(&fname[0], 1, lhdr.fnlen, pFile)) return;
                 // Only add  files
                 if (lhdr.csize || (lhdr.csize==0 && csize)) {
                     if (lhdr.csize==0) lhdr.csize=csize; // no local compressed size (.vsix)
